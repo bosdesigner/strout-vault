@@ -12,6 +12,7 @@ import { uploadStore } from "@/lib/uploads";
 import { useWindowDropzone } from "@/hooks/useDropzone";
 import { isReady } from "@/lib/format";
 import { useWorkspace } from "@/lib/workspace";
+import { useMe } from "@/hooks/useAuth";
 
 const PAGE = 24;
 
@@ -19,7 +20,10 @@ export default function LibraryPage() {
   const [params] = useSearchParams();
   const f = readFilters(params);
   const qc = useQueryClient();
-  const { workspaceId } = useWorkspace();
+  const { workspaceId, workspaces } = useWorkspace();
+  const me = useMe();
+  const contractor = me.data?.user.role === "contractor";
+  const contractorWorkspace = contractor ? workspaces.find((w) => w.id === me.data?.user.workspaceId)?.name ?? me.data?.user.workspaceId : null;
 
   useEffect(() => {
     document.title = "Library · Strout Vault";
@@ -108,7 +112,11 @@ export default function LibraryPage() {
       <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Library</h1>
-          <p className="text-sm text-muted-foreground">{workspaceId ? "Recordings in this workspace, newest first." : "Every recorded conversation, newest first."}</p>
+          <p className="text-sm text-muted-foreground">
+            {contractor
+              ? `Recordings you were part of or uploaded${contractorWorkspace ? ` in ${contractorWorkspace}` : ""}, newest first.`
+              : workspaceId ? "Recordings in this workspace, newest first." : "Every recorded conversation, newest first."}
+          </p>
         </div>
       </div>
       <div className="mb-6">

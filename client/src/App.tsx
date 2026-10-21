@@ -13,6 +13,7 @@ import PeoplePage from "@/pages/PeoplePage";
 import ProjectsPage from "@/pages/ProjectsPage";
 import ProjectPage from "@/pages/ProjectPage";
 import ReviewPage from "@/pages/ReviewPage";
+import AccessPage from "@/pages/AccessPage";
 import { WorkspaceProvider } from "@/lib/workspace";
 import { MobileNav } from "@/components/MobileNav";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -40,10 +41,10 @@ function RequireAuth() {
     <WorkspaceProvider>
       <div className="min-h-screen flex flex-col">
         <TopBar user={me.data.user} />
-        <main className="flex-1 pb-16 lg:pb-0">
+        <main className={me.data.user.role === "owner" ? "flex-1 pb-16 lg:pb-0" : "flex-1"}>
           <Outlet />
         </main>
-        <MobileNav />
+        <MobileNav owner={me.data.user.role === "owner"} />
         <UploadDialog />
         <UploadTray />
       </div>
@@ -64,6 +65,7 @@ export default function App() {
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/projects/:id" element={<ProjectPage />} />
         <Route path="/review" element={<ReviewPage />} />
+        <Route path="/access" element={<AccessPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

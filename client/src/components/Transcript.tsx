@@ -15,6 +15,8 @@ interface Props {
   onSeek: (sec: number) => void;
   /** Segment to flash + scroll to (from ?t= or a search hit). */
   initialSeconds?: number | null;
+  /** Link speaker names to their person page (owner only). */
+  linkSpeakers?: boolean;
 }
 
 /** Index of the line playing at `t` (last line whose start <= t). */
@@ -32,7 +34,7 @@ export function lineIndexAt(lines: TranscriptLine[], t: number): number {
   return ans;
 }
 
-export function Transcript({ lines, anchored, currentTime, onSeek, initialSeconds }: Props) {
+export function Transcript({ lines, anchored, currentTime, onSeek, initialSeconds, linkSpeakers = true }: Props) {
   const [find, setFind] = useState("");
   const [findOpen, setFindOpen] = useState(false);
   const [matchPos, setMatchPos] = useState(0);
@@ -198,6 +200,7 @@ export function Transcript({ lines, anchored, currentTime, onSeek, initialSecond
             anchored={anchored}
             active={i === current}
             matched={matchSet.has(i)}
+            linkSpeakers={linkSpeakers}
             focusedMatch={matches.length > 0 && matches[Math.min(matchPos, matches.length - 1)] === i}
             onSeek={(s) => {
               setFollow(true);
@@ -210,7 +213,7 @@ export function Transcript({ lines, anchored, currentTime, onSeek, initialSecond
   );
 }
 
-const Line = memo(function Line({ line, idx, anchored, active, matched, focusedMatch, onSeek }: { line: TranscriptLine; idx: number; anchored: boolean; active: boolean; matched: boolean; focusedMatch: boolean; onSeek: (s: number) => void }) {
+const Line = memo(function Line({ line, idx, anchored, active, matched, focusedMatch, onSeek, linkSpeakers }: { line: TranscriptLine; idx: number; anchored: boolean; active: boolean; matched: boolean; focusedMatch: boolean; onSeek: (s: number) => void; linkSpeakers: boolean }) {
   return (
     <li
       data-idx={idx}
@@ -235,7 +238,7 @@ const Line = memo(function Line({ line, idx, anchored, active, matched, focusedM
       <div className="min-w-0 flex-1 text-sm leading-relaxed">
         {line.speaker && (
           <span className="mr-2 text-xs font-medium text-muted-foreground">
-            {line.speakerPartyId ? (
+            {line.speakerPartyId && linkSpeakers ? (
               <Link to={`/p/${line.speakerPartyId}`} className="hover:text-primary hover:underline underline-offset-2">
                 {line.speaker}
               </Link>

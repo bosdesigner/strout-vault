@@ -3,8 +3,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, onUnauthenticated, setCsrfToken } from "@/lib/api";
 
 export interface Me {
-  user: { email: string; role: string };
+  user: { email: string; role: "owner" | "contractor" | string; workspaceId?: string | null; partyId?: number | null; displayName?: string | null };
   csrfToken: string;
+}
+
+export function useRequestMagicLink() {
+  return useMutation({
+    mutationFn: (input: { email: string }) => api<{ ok: boolean; message: string }>("/auth/magic-link", { method: "POST", json: input }),
+  });
 }
 
 export function useMe() {
