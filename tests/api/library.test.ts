@@ -34,7 +34,7 @@ describe("library", () => {
       cursor = page.nextCursor;
     } while (cursor);
     expect(pages).toBeGreaterThanOrEqual(3);
-    expect(seen.size).toBe(40);
+    expect(seen.size).toBeGreaterThanOrEqual(40);
   });
 
   it("includes preview text for generic titles, participants, duration and status", async () => {
@@ -70,13 +70,16 @@ describe("library", () => {
     const { rows } = await t.dbHandle.pool.query(`select interaction_id from interaction_participants where party_id = $1`, [kevin.id]);
     expect(byKevin.items.length).toBe(rows.length);
 
-    // Under the local driver only storage='local' sample rows are playable.
+    // Under the local driver only storage='local' rows with relative keys are playable (the three seeded samples,
+    // plus anything other test files uploaded into local storage).
     const video = await list("hasVideo=true&limit=100");
-    expect(video.items.map((i) => i.title).sort()).toEqual(
-      ["Kevin: quick check on the Conroe call time", "Pool house tile sample walkthrough", "Porch measure notes (phone)"].sort(),
-    );
+    for (const title of ["Kevin: quick check on the Conroe call time", "Pool house tile sample walkthrough", "Porch measure notes (phone)"]) {
+      expect(video.items.map((i) => i.title)).toContain(title);
+    }
+    expect(video.items.some((i) => i.title === "Heights bungalow: beam sizes and permit set")).toBe(false); // zoom + Mac path only
     const noVideo = await list("hasVideo=false&limit=100");
-    expect(noVideo.items.length + video.items.length).toBe(40);
+    const total = await list("limit=100");
+    expect(noVideo.items.length + video.items.length).toBe(total.items.length);
   });
 
   it("reports pipeline statuses for polling", async () => {

@@ -8518,6 +8518,17 @@ insert into relationships (from_party_id, to_party_id, kind, workspace_id, first
   (13, 3, 'builds_for', 'strout_arch', '2024-01-15T00:00:00Z', '2026-09-01T00:00:00Z', 3),
   (7, 4, 'supplies', 'southern_shutter', '2024-01-15T00:00:00Z', '2026-09-01T00:00:00Z', 2);
 
+insert into memberships (id, email, role, workspace_id, party_id, status, display_name, invited_by, last_login_at) values
+  (1, 'kevin.mcguire@example.com', 'contractor', 'another_story', 2, 'active', 'Kevin McGuire', 'ben@example.com', '2026-10-01T14:00:00Z'),
+  (2, 'carlos@oakridgebuilders.example.com', 'contractor', 'strout_arch', 13, 'invited', 'Carlos Mendes', 'ben@example.com', null);
+insert into tracked_numbers (id, workspace_id, membership_id, party_id, phone_number, forward_to, twilio_sid, recording_notice, status) values
+  (1, 'another_story', 1, 2, '+19365550199', '+19365550142', 'PN00000000000000000000000000000001', 'This call is recorded so Another Story can keep good notes. One moment while we connect you.', 'active');
+insert into calls (tracked_number_id, call_sid, direction, from_number, to_number, caller_party_id, started_at, ended_at, duration_sec, status, recording_status) values
+  (1, 'CA00000000000000000000000000000001', 'inbound', '+12815550133', '+19365550199', 4, '2026-10-02T16:05:00Z', '2026-10-02T16:14:30Z', 570, 'completed', 'failed'),
+  (1, 'CA00000000000000000000000000000002', 'inbound', '+17135550100', '+19365550199', null, '2026-10-05T19:20:00Z', '2026-10-05T19:20:40Z', 0, 'no-answer', null);
+update calls set recording_error = 'Twilio returned 404 for the recording (expired before fetch)' where call_sid = 'CA00000000000000000000000000000001';
+select setval('memberships_id_seq', (select max(id) from memberships));
+select setval('tracked_numbers_id_seq', (select max(id) from tracked_numbers));
 select setval('parties_id_seq', (select max(id) from parties));
 select setval('projects_id_seq', (select max(id) from projects));
 select setval('interactions_id_seq', (select max(id) from interactions));

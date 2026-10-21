@@ -645,6 +645,18 @@ out.push(
     .join(",\n") + ";",
 );
 out.push("");
+// Phase 3: a contractor login, their tracked number and a couple of calls.
+out.push("insert into memberships (id, email, role, workspace_id, party_id, status, display_name, invited_by, last_login_at) values");
+out.push(`  (1, 'kevin.mcguire@example.com', 'contractor', 'another_story', ${P["Kevin McGuire"]}, 'active', 'Kevin McGuire', 'ben@example.com', '2026-10-01T14:00:00Z'),`);
+out.push(`  (2, 'carlos@oakridgebuilders.example.com', 'contractor', 'strout_arch', ${P["Carlos Mendes"]}, 'invited', 'Carlos Mendes', 'ben@example.com', null);`);
+out.push("insert into tracked_numbers (id, workspace_id, membership_id, party_id, phone_number, forward_to, twilio_sid, recording_notice, status) values");
+out.push(`  (1, 'another_story', 1, ${P["Kevin McGuire"]}, '+19365550199', '+19365550142', 'PN00000000000000000000000000000001', 'This call is recorded so Another Story can keep good notes. One moment while we connect you.', 'active');`);
+out.push("insert into calls (tracked_number_id, call_sid, direction, from_number, to_number, caller_party_id, started_at, ended_at, duration_sec, status, recording_status) values");
+out.push(`  (1, 'CA00000000000000000000000000000001', 'inbound', '+12815550133', '+19365550199', ${P["Tom Ashworth"]}, '2026-10-02T16:05:00Z', '2026-10-02T16:14:30Z', 570, 'completed', 'failed'),`);
+out.push(`  (1, 'CA00000000000000000000000000000002', 'inbound', '+17135550100', '+19365550199', null, '2026-10-05T19:20:00Z', '2026-10-05T19:20:40Z', 0, 'no-answer', null);`);
+out.push("update calls set recording_error = 'Twilio returned 404 for the recording (expired before fetch)' where call_sid = 'CA00000000000000000000000000000001';");
+out.push("select setval('memberships_id_seq', (select max(id) from memberships));");
+out.push("select setval('tracked_numbers_id_seq', (select max(id) from tracked_numbers));");
 out.push("select setval('parties_id_seq', (select max(id) from parties));");
 out.push("select setval('projects_id_seq', (select max(id) from projects));");
 out.push("select setval('interactions_id_seq', (select max(id) from interactions));");
