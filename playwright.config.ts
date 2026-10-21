@@ -41,7 +41,7 @@ export default defineConfig({
       name: "iphone",
       use: { ...devices["iPhone 13"], browserName: "chromium", storageState: ".data/e2e-auth.json" },
       dependencies: ["setup"],
-      testMatch: /(library|recording)\.spec\.ts/,
+      testMatch: /(library|recording|phase2)\.spec\.ts/,
     },
   ],
 });

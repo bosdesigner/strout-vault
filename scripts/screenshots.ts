@@ -8,7 +8,8 @@ import { chromium, type Browser, type Page } from "@playwright/test";
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const EMAIL = process.env.SCREENSHOT_EMAIL ?? "dev@strout.local";
 const PASSWORD = process.env.SCREENSHOT_PASSWORD ?? "vault-dev-password";
-const OUT = path.resolve("docs/screenshots/phase-1");
+const PHASE = process.env.SCREENSHOT_PHASE ?? "phase-1";
+const OUT = path.resolve(`docs/screenshots/${PHASE}`);
 fs.mkdirSync(OUT, { recursive: true });
 
 const SIZES = [
@@ -38,7 +39,56 @@ async function shoot(page: Page, name: string, size: (typeof SIZES)[number], opt
   console.log(`${path.relative(process.cwd(), file)}${flag}`);
 }
 
+async function runPhase2(browser: Browser) {
+  for (const size of SIZES) {
+    const ctx = await browser.newContext({ viewport: { width: size.width, height: size.height }, deviceScaleFactor: size.mobile ? 2 : 1, isMobile: size.mobile, hasTouch: size.mobile });
+    const page = await ctx.newPage();
+    await login(page);
+    await page.goto(`${BASE}/people`);
+    await page.getByTestId("person-row").first().waitFor();
+    await settle(page);
+    await shoot(page, "people", size);
+    await page.goto(`${BASE}/people?role=contractor`);
+    await page.getByTestId("person-row").first().waitFor();
+    await settle(page);
+    await shoot(page, "people-filtered", size);
+    const kevin = await (await page.request.get(`${BASE}/api/parties?q=Kevin`)).json();
+    await page.goto(`${BASE}/p/${kevin.items[0].id}`);
+    await page.getByTestId("person-name").waitFor();
+    await settle(page);
+    await shoot(page, "person", size);
+    await page.goto(`${BASE}/projects`);
+    await page.getByTestId("project-card").first().waitFor();
+    await settle(page);
+    await shoot(page, "projects", size);
+    const heights = await (await page.request.get(`${BASE}/api/projects?q=Heights`)).json();
+    await page.goto(`${BASE}/projects/${heights.items[0].id}`);
+    await page.getByTestId("project-name").waitFor();
+    await settle(page);
+    await shoot(page, "project", size);
+    await page.goto(`${BASE}/review`);
+    await page.getByTestId("review-item").first().waitFor();
+    await settle(page);
+    await shoot(page, "review", size);
+    const hit = (await (await page.request.get(`${BASE}/api/search?q=pelican%20roof%20tiles`)).json()).groups[0];
+    await page.goto(`${BASE}/r/${hit.interactionId}`);
+    await page.getByTestId("video").waitFor();
+    await page.getByRole("tab", { name: /People/ }).click({ force: true });
+    await settle(page);
+    await shoot(page, "recording-people", size);
+    await page.goto(`${BASE}/`);
+    await page.getByTestId("recording-card").first().waitFor();
+    await page.getByTestId("workspace-switcher").filter({ visible: true }).click();
+    await page.getByRole("option", { name: "Strout Architecture" }).click();
+    await page.getByTestId("recording-card").first().waitFor();
+    await settle(page);
+    await shoot(page, "library-workspace", size);
+    await ctx.close();
+  }
+}
+
 async function run(browser: Browser) {
+  if (PHASE === "phase-2") return runPhase2(browser);
   // Find a playable recording and a search hit to link to.
   const ctx0 = await browser.newContext();
   const p0 = await ctx0.newPage();
