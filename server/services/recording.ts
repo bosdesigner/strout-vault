@@ -17,7 +17,7 @@ export async function getRecording(pool: pg.Pool, storage: StorageDriver, id: nu
   const i = irows[0];
   if (!i) return null;
 
-  const [participants, files, jobs, transcript, facts, clips] = await Promise.all([
+  const [participants, files, jobs, transcript, facts, clips, projects, speakers] = await Promise.all([
     pool.query(
       `select pa.id, pa.name, pa.kind, ip.speaker_label, ip.confidence,
               coalesce((
@@ -57,6 +57,17 @@ export async function getRecording(pool: pg.Pool, storage: StorageDriver, id: nu
     pool.query(
       `select id, start_sec, end_sec, score, hook, why, status from clip_candidates
        where interaction_id = $1 order by score desc, start_sec`,
+      [id],
+    ),
+    pool.query(
+      `select pr.id, pr.name, pr.status, pr.workspace_id, w.name as workspace_name
+       from interaction_links il join projects pr on pr.id = il.project_id join workspaces w on w.id = pr.workspace_id
+       where il.interaction_id = $1 order by pr.name`,
+      [id],
+    ),
+    pool.query(
+      `select speaker, min(speaker_party_id) as party_id, count(*)::int as lines
+       from segments where interaction_id = $1 and speaker is not null group by speaker order by min(idx)`,
       [id],
     ),
   ]);
@@ -167,6 +178,8 @@ export async function getRecording(pool: pg.Pool, storage: StorageDriver, id: nu
       why: c.why,
       status: c.status,
     })),
+    projects: projects.rows.map((p) => ({ id: p.id, name: p.name, status: p.status, workspaceId: p.workspace_id, workspaceName: p.workspace_name })),
+    speakers: speakers.rows.map((s) => ({ label: s.speaker, partyId: s.party_id ?? null, lines: s.lines })),
   };
 }
 
