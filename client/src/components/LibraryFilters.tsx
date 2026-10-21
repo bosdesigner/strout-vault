@@ -6,14 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PartyPicker } from "./PartyPicker";
-import { useWorkspaces } from "@/hooks/useWorkspaces";
 import { SOURCE_LABEL } from "@/lib/format";
 
 export interface LibraryFilterState {
   from: string;
   to: string;
   source: string;
-  workspace: string;
   party: { id: number; name: string } | null;
   hasVideo: boolean;
 }
@@ -24,7 +22,6 @@ export function readFilters(params: URLSearchParams): LibraryFilterState {
     from: params.get("from") ?? "",
     to: params.get("to") ?? "",
     source: params.get("source") ?? "",
-    workspace: params.get("workspace") ?? "",
     party: partyId > 0 ? { id: partyId, name: params.get("partyName") ?? `#${partyId}` } : null,
     hasVideo: params.get("hasVideo") === "true",
   };
@@ -36,7 +33,6 @@ const YEARS = ["2026", "2025", "2024", "2023", "2022"];
 export function LibraryFilters() {
   const [params, setParams] = useSearchParams();
   const f = readFilters(params);
-  const workspaces = useWorkspaces();
 
   const update = (patch: Partial<Record<string, string | null>>) => {
     const next = new URLSearchParams(params);
@@ -83,20 +79,6 @@ export function LibraryFilters() {
             <SelectItem value={ALL}>Any source</SelectItem>
             {Object.entries(SOURCE_LABEL).map(([k, v]) => (
               <SelectItem key={k} value={k}>{v}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="space-y-1">
-        <Label htmlFor="f-workspace" className="text-xs text-muted-foreground">Workspace</Label>
-        <Select value={f.workspace || ALL} onValueChange={(v) => update({ workspace: v === ALL ? null : v })}>
-          <SelectTrigger id="f-workspace" className="h-8 w-[11rem]" aria-label="Workspace">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>All workspaces</SelectItem>
-            {(workspaces.data ?? []).map((w) => (
-              <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>

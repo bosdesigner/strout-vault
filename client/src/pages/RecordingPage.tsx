@@ -18,6 +18,9 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/EmptyState";
+import { PartyPicker } from "@/components/PartyPicker";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import type { ProjectListItem } from "@shared/types";
 
 export default function RecordingPage() {
   const { id } = useParams();
@@ -28,6 +31,9 @@ export default function RecordingPage() {
   const video = useRef<VideoHandle>(null);
   const [time, setTime] = useState(startAt ?? 0);
   const isDesktop = useMediaQuery("(min-width: 1024px)");
+  const [newPerson, setNewPerson] = useState<Array<{ id: number; name: string }>>([]);
+  const [newLabel, setNewLabel] = useState<string>("");
+  const [newProject, setNewProject] = useState<string>("");
 
   const detail = useQuery({
     queryKey: ["recording", recId],
@@ -52,6 +58,29 @@ export default function RecordingPage() {
       qc.setQueryData(["recording", recId], data);
       void qc.invalidateQueries({ queryKey: ["library"] });
     },
+  });
+  const addParticipant = useMutation({
+    mutationFn: (body: { partyId: number; speakerLabel: string | null }) => api<{ linesAssigned: number; recording: RecordingDetail }>(`/interactions/${recId}/participants`, { method: "POST", json: body }),
+    onSuccess: ({ recording }) => {
+      qc.setQueryData(["recording", recId], recording);
+      void qc.invalidateQueries({ queryKey: ["segments", recId] });
+      void qc.invalidateQueries({ queryKey: ["library"] });
+      setNewPerson([]);
+      setNewLabel("");
+    },
+  });
+  const linkProject = useMutation({
+    mutationFn: (projectId: number) => api<RecordingDetail>(`/interactions/${recId}/projects`, { method: "POST", json: { projectId } }),
+    onSuccess: (data) => {
+      qc.setQueryData(["recording", recId], data);
+      setNewProject("");
+    },
+  });
+  const projectOptions = useQuery({
+    queryKey: ["projects", "", detail.data?.workspace?.id ? `&workspace=${detail.data.workspace.id}` : ""],
+    queryFn: () => api<{ items: ProjectListItem[] }>(`/projects?${detail.data?.workspace?.id ? `workspace=${encodeURIComponent(detail.data.workspace.id)}` : ""}`),
+    enabled: detail.isSuccess,
+    staleTime: 60_000,
   });
   const clipStatus = useMutation({
     mutationFn: ({ clipId, status }: { clipId: number; status: "approved" | "rejected" | "new" }) =>
@@ -159,7 +188,8 @@ export default function RecordingPage() {
               <TabsContent value="people">
                 {r.participants.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No one has been tagged on this recording yet.</p>
-                ) : (
+                ) : null}
+                {r.participants.length > 0 && (
                   <ul className="divide-y rounded-lg border">
                     {r.participants.map((p) => (
                       <li key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5">
@@ -178,6 +208,74 @@ export default function RecordingPage() {
                     ))}
                   </ul>
                 )}
+                {/* Tag a person by hand, optionally naming which speaker label is theirs. */}
+                <form
+                  className="mt-3 flex flex-wrap items-end gap-2 rounded-lg border border-dashed p-3"
+                  data-testid="tag-person"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (newPerson[0]) addParticipant.mutate({ partyId: newPerson[0].id, speakerLabel: newLabel || null });
+                  }}
+                >
+                  <div className="min-w-[12rem] flex-1 space-y-1">
+                    <span className="text-xs text-muted-foreground">Tag a person</span>
+                    <PartyPicker multiple={false} value={newPerson} onChange={setNewPerson} placeholder="Who else was on this call?" />
+                  </div>
+                  {r.speakers.length > 0 && (
+                    <div className="space-y-1">
+                      <span className="text-xs text-muted-foreground">Speaking as</span>
+                      <Select value={newLabel || "__none"} onValueChange={(v) => setNewLabel(v === "__none" ? "" : v)}>
+                        <SelectTrigger className="h-8 w-[11rem]" aria-label="Speaker label"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none">No speaker label</SelectItem>
+                          {r.speakers.map((s) => (
+                            <SelectItem key={s.label} value={s.label}>
+                              {s.label} · {s.lines} line{s.lines === 1 ? "" : "s"}{s.partyId ? " · assigned" : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <Button type="submit" size="sm" className="h-8" disabled={!newPerson[0] || addParticipant.isPending} data-testid="tag-person-save">Add</Button>
+                  {addParticipant.data && addParticipant.data.linesAssigned > 0 && (
+                    <span className="w-full text-xs text-muted-foreground">{addParticipant.data.linesAssigned} transcript lines assigned.</span>
+                  )}
+                </form>
+
+                <h3 className="mb-1.5 mt-5 text-sm font-medium">Projects</h3>
+                {r.projects.length > 0 && (
+                  <ul className="mb-2 flex flex-wrap gap-1.5" data-testid="linked-projects">
+                    {r.projects.map((pr) => (
+                      <li key={pr.id}>
+                        <Link to={`/projects/${pr.id}`} className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm hover:bg-accent">
+                          {pr.name} <span className="text-xs text-muted-foreground">{pr.workspaceName}</span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <form
+                  className="flex flex-wrap items-center gap-2"
+                  data-testid="link-project"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (newProject) linkProject.mutate(Number(newProject));
+                  }}
+                >
+                  <Select value={newProject || "__none"} onValueChange={(v) => setNewProject(v === "__none" ? "" : v)}>
+                    <SelectTrigger className="h-8 w-[16rem]" aria-label="Project to link"><SelectValue placeholder="Link a project…" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none">Link a project…</SelectItem>
+                      {(projectOptions.data?.items ?? [])
+                        .filter((pr) => !r.projects.some((x) => x.id === pr.id))
+                        .map((pr) => (
+                          <SelectItem key={pr.id} value={String(pr.id)}>{pr.name} · {pr.workspaceName}</SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  <Button type="submit" size="sm" variant="outline" className="h-8" disabled={!newProject || linkProject.isPending} data-testid="link-project-save">Link</Button>
+                </form>
               </TabsContent>
               <TabsContent value="facts">
                 {r.facts.length === 0 ? (

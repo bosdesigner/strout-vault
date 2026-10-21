@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { uploadStore } from "@/lib/uploads";
 import { useWindowDropzone } from "@/hooks/useDropzone";
 import { isReady } from "@/lib/format";
+import { useWorkspace } from "@/lib/workspace";
 
 const PAGE = 24;
 
@@ -18,6 +19,7 @@ export default function LibraryPage() {
   const [params] = useSearchParams();
   const f = readFilters(params);
   const qc = useQueryClient();
+  const { workspaceId } = useWorkspace();
 
   useEffect(() => {
     document.title = "Library · Strout Vault";
@@ -28,12 +30,12 @@ export default function LibraryPage() {
     if (f.from) p.set("from", f.from);
     if (f.to) p.set("to", f.to);
     if (f.source) p.set("source", f.source);
-    if (f.workspace) p.set("workspace", f.workspace);
+    if (workspaceId) p.set("workspace", workspaceId);
     if (f.party) p.set("party", String(f.party.id));
     if (f.hasVideo) p.set("hasVideo", "true");
     p.set("limit", String(PAGE));
     return p.toString();
-  }, [f.from, f.to, f.source, f.workspace, f.party?.id, f.hasVideo]);
+  }, [f.from, f.to, f.source, workspaceId, f.party?.id, f.hasVideo]);
 
   const query = useInfiniteQuery({
     queryKey: ["library", queryString],
@@ -88,8 +90,8 @@ export default function LibraryPage() {
   }, [query.hasNextPage, query.isFetchingNextPage, query.fetchNextPage, query]);
 
   const onFiles = useCallback((files: File[]) => {
-    uploadStore.addFiles(files, { workspaceId: f.workspace || null });
-  }, [f.workspace]);
+    uploadStore.addFiles(files, { workspaceId: workspaceId || null });
+  }, [workspaceId]);
   const dragging = useWindowDropzone(onFiles);
 
   return (
@@ -106,7 +108,7 @@ export default function LibraryPage() {
       <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Library</h1>
-          <p className="text-sm text-muted-foreground">Every recorded conversation, newest first.</p>
+          <p className="text-sm text-muted-foreground">{workspaceId ? "Recordings in this workspace, newest first." : "Every recorded conversation, newest first."}</p>
         </div>
       </div>
       <div className="mb-6">

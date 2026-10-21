@@ -11,11 +11,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PartyPicker } from "@/components/PartyPicker";
-import { useWorkspaces } from "@/hooks/useWorkspaces";
-
-const ALL = "__all";
+import { useWorkspace } from "@/lib/workspace";
 
 export default function SearchPage() {
   const [params, setParams] = useSearchParams();
@@ -23,10 +20,9 @@ export default function SearchPage() {
   const page = Math.max(1, Number(params.get("page")) || 1);
   const from = params.get("from") ?? "";
   const to = params.get("to") ?? "";
-  const workspace = params.get("workspace") ?? "";
+  const { workspaceId: workspace, current } = useWorkspace();
   const partyId = Number(params.get("party"));
   const party = partyId > 0 ? { id: partyId, name: params.get("partyName") ?? `#${partyId}` } : null;
-  const workspaces = useWorkspaces();
 
   useEffect(() => {
     document.title = q ? `“${q}” · Strout Vault` : "Search · Strout Vault";
@@ -57,6 +53,7 @@ export default function SearchPage() {
         <h1 className="text-xl font-semibold tracking-tight">{q ? <>Results for <span className="text-primary break-words">{q}</span></> : "Search"}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Quote a phrase, use <code className="rounded bg-muted px-1">OR</code> between words, or <code className="rounded bg-muted px-1">-word</code> to exclude.
+          {current && <span className="ml-2">Scoped to {current.name}.</span>}
           {result.data && <span className="ml-2 tabular">{result.data.tookMs} ms</span>}
         </p>
       </div>
@@ -68,18 +65,6 @@ export default function SearchPage() {
         <div className="space-y-1">
           <Label htmlFor="s-to" className="text-xs text-muted-foreground">To</Label>
           <Input id="s-to" type="date" className="h-8 w-[9.5rem]" value={to} onChange={(e) => update({ to: e.target.value || null })} />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="s-workspace" className="text-xs text-muted-foreground">Workspace</Label>
-          <Select value={workspace || ALL} onValueChange={(v) => update({ workspace: v === ALL ? null : v })}>
-            <SelectTrigger id="s-workspace" className="h-8 w-[11rem]"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>All workspaces</SelectItem>
-              {(workspaces.data ?? []).map((w) => (
-                <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </div>
         <div className="space-y-1 min-w-[12rem] flex-1 max-w-xs">
           <Label htmlFor="s-person" className="text-xs text-muted-foreground">Person</Label>

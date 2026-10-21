@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { LogOut, Moon, Search, Sun, Upload, Vault } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,7 +8,11 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useLogout } from "@/hooks/useAuth";
 import { useTheme } from "@/lib/theme";
+import { api } from "@/lib/api";
 import { uploadStore, useUploads, uploadsInProgress } from "@/lib/uploads";
+import { useWorkspace } from "@/lib/workspace";
+import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import { cn } from "@/lib/utils";
 
 export function TopBar({ user }: { user: { email: string } }) {
   const navigate = useNavigate();
@@ -19,8 +24,14 @@ export function TopBar({ user }: { user: { email: string } }) {
   const { isDark, toggle } = useTheme();
   const uploads = useUploads();
   const busy = uploadsInProgress(uploads.items);
+  const { param } = useWorkspace();
+  const reviewCount = useQuery({
+    queryKey: ["review-count", param],
+    queryFn: () => api<{ openCount: number }>(`/review/count?${param.slice(1)}`),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
 
-  // Keep the box in sync with the URL when navigating between searches.
   useEffect(() => {
     if (location.pathname === "/search") setQ(params.get("q") ?? "");
   }, [location.pathname, params]);
@@ -47,27 +58,41 @@ export function TopBar({ user }: { user: { email: string } }) {
     navigate(`/search?q=${encodeURIComponent(term)}`);
   };
 
+  const navClass = ({ isActive }: { isActive: boolean }) =>
+    cn(
+      "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground hover:bg-accent",
+      isActive && "bg-accent text-foreground",
+    );
+  const nav = (
+    <nav aria-label="Primary" className="flex items-center gap-0.5 overflow-x-auto scrollbar-thin">
+      <NavLink to="/" end className={navClass}>Library</NavLink>
+      <NavLink to="/people" className={navClass}>People</NavLink>
+      <NavLink to="/projects" className={navClass}>Projects</NavLink>
+      <NavLink to="/review" className={navClass}>
+        Review
+        {!!reviewCount.data?.openCount && (
+          <span className="rounded-full bg-primary px-1.5 text-[11px] font-semibold leading-4 text-primary-foreground tabular" data-testid="review-count">{reviewCount.data.openCount}</span>
+        )}
+      </NavLink>
+    </nav>
+  );
+
   return (
     <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-      <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 px-4 sm:gap-3">
+      <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 px-4 lg:gap-3">
         <Link to="/" className="flex shrink-0 items-center gap-2 font-semibold tracking-tight" aria-label="Strout Vault home">
           <Vault className="h-5 w-5 text-primary" />
-          <span className="hidden md:inline">Strout Vault</span>
+          <span className="hidden xl:inline">Strout Vault</span>
         </Link>
-        <form onSubmit={submit} role="search" className="relative mx-auto min-w-0 flex-1 max-w-xl">
+        <div className="hidden lg:block">{nav}</div>
+        <form onSubmit={submit} role="search" className="relative mx-auto min-w-0 flex-1 max-w-md">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            ref={inputRef}
-            type="search"
-            name="q"
-            aria-label="Search transcripts"
-            placeholder="Search transcripts"
-            className="pl-9"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
+          <Input ref={inputRef} type="search" name="q" aria-label="Search transcripts" placeholder="Search transcripts" className="pl-9" value={q} onChange={(e) => setQ(e.target.value)} />
           <kbd className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 rounded border bg-muted px-1.5 text-[11px] text-muted-foreground sm:inline-block">/</kbd>
         </form>
+        <div className="hidden lg:block">
+          <WorkspaceSwitcher className="w-[11rem]" />
+        </div>
         <div className="flex shrink-0 items-center gap-1">
           <Button onClick={() => uploadStore.openDialog()} size="sm" className="gap-1.5 px-2.5 sm:px-3" data-testid="upload-button" aria-label="Upload">
             <Upload className="h-4 w-4" />
@@ -100,6 +125,10 @@ export function TopBar({ user }: { user: { email: string } }) {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+      </div>
+      {/* Phones and tablets: the workspace switcher gets its own row; section nav is the bottom tab bar. */}
+      <div className="mx-auto max-w-7xl px-4 pb-2 lg:hidden">
+        <WorkspaceSwitcher className="w-full" />
       </div>
     </header>
   );
