@@ -3,7 +3,7 @@
 # Deployment: build once, then `npm start` serves dist/ on PORT.
 run = "npm run dev"
 entrypoint = "server/index.ts"
-modules = ["nodejs-20"]
+modules = ["nodejs-20", "web"]
 hidden = [".config", "dist", "node_modules", ".data"]
 
 [deployment]
@@ -16,4 +16,4 @@ localPort = 3000
 externalPort = 80
 
 [nix]
-channel = "stable-24_05"
+channel = "stable-25_05"
