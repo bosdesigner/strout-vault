@@ -87,8 +87,48 @@ async function runPhase2(browser: Browser) {
   }
 }
 
+async function runPhase3(browser: Browser) {
+  for (const size of SIZES) {
+    const ctx = await browser.newContext({ viewport: { width: size.width, height: size.height }, deviceScaleFactor: size.mobile ? 2 : 1, isMobile: size.mobile, hasTouch: size.mobile });
+    const page = await ctx.newPage();
+    await page.goto(`${BASE}/login?mode=link`);
+    await settle(page);
+    await shoot(page, "login-link", size);
+    await login(page);
+    await page.goto(`${BASE}/access`);
+    await page.getByTestId("membership-row").first().waitFor();
+    await page.getByTestId("calls").waitFor();
+    await settle(page);
+    await shoot(page, "access", size, { fullPage: true });
+    await ctx.close();
+
+    // The contractor's view, through a real magic link.
+    const cctx = await browser.newContext({ viewport: { width: size.width, height: size.height }, deviceScaleFactor: size.mobile ? 2 : 1, isMobile: size.mobile, hasTouch: size.mobile });
+    const cpage = await cctx.newPage();
+    await cpage.goto(`${BASE}/login?mode=link`);
+    await cpage.getByLabel("Email").fill("kevin.mcguire@example.com");
+    await cpage.getByTestId("submit-login").click();
+    await cpage.getByTestId("link-sent").waitFor();
+    await settle(cpage);
+    await shoot(cpage, "login-link-sent", size);
+    const mail = await (await cpage.request.get(`${BASE}/api/_test/last-mail`)).json();
+    const link = (mail.mail.text as string).match(/https?:\/\/\S+\/api\/auth\/magic\?token=\S+/)![0];
+    await cpage.goto(`${BASE}${new URL(link).pathname}${new URL(link).search}`);
+    await cpage.getByTestId("recording-card").first().waitFor();
+    await settle(cpage);
+    await shoot(cpage, "contractor-library", size);
+    const first = await cpage.getByTestId("recording-card").first().getAttribute("data-id");
+    await cpage.goto(`${BASE}/r/${first}`);
+    await cpage.locator("ol[aria-label=Transcript] li, [data-testid=video-offline]").first().waitFor();
+    await settle(cpage);
+    await shoot(cpage, "contractor-recording", size);
+    await cctx.close();
+  }
+}
+
 async function run(browser: Browser) {
   if (PHASE === "phase-2") return runPhase2(browser);
+  if (PHASE === "phase-3") return runPhase3(browser);
   // Find a playable recording and a search hit to link to.
   const ctx0 = await browser.newContext();
   const p0 = await ctx0.newPage();

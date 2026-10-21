@@ -7,6 +7,7 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   HeadBucketCommand,
+  PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Config } from "../config.ts";
@@ -105,6 +106,13 @@ export class S3StorageDriver implements StorageDriver {
   async abortMultipartUpload(input: { key: string; uploadId: string }) {
     const { client, bucket } = this.backends.r2!;
     await client.send(new AbortMultipartUploadCommand({ Bucket: bucket, Key: input.key, UploadId: input.uploadId }));
+  }
+
+  async putObject(input: { key: string; body: Buffer; contentType?: string | null }): Promise<{ bytes: number }> {
+    assertSafeKey(input.key);
+    const { client, bucket } = this.backends.r2!;
+    await client.send(new PutObjectCommand({ Bucket: bucket, Key: input.key, Body: input.body, ContentType: input.contentType ?? undefined }));
+    return { bytes: input.body.length };
   }
 
   async presignGet(location: ObjectLocation, opts: { expiresInSec?: number } = {}): Promise<PresignedUrl | null> {

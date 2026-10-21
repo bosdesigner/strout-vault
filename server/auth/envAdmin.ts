@@ -13,6 +13,14 @@ export class EnvAdminAuthProvider implements AuthProvider {
     const matchesEmail = email.trim().toLowerCase() === this.adminEmail.trim().toLowerCase();
     const ok = await verifyPasswordHash(password, matchesEmail ? this.adminPasswordHash : DUMMY_HASH);
     if (!matchesEmail || !ok) return null;
-    return { sub: "admin", email: this.adminEmail, role: "owner", workspaceId: null, partyId: null };
+    return { sub: "admin", email: this.adminEmail, role: "owner", workspaceId: null, partyId: null, membershipId: null };
+  }
+
+  async requestMagicLink(): Promise<void> {
+    /* the owner signs in with a password */
+  }
+
+  async redeemMagicLink(): Promise<Principal | null> {
+    return null;
   }
 }

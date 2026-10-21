@@ -6,14 +6,16 @@ import { useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
 
 /** Bottom tab bar for phones and tablets; the desktop nav lives in the top bar. */
-export function MobileNav() {
+export function MobileNav({ owner }: { owner: boolean }) {
   const { param } = useWorkspace();
   const reviewCount = useQuery({
     queryKey: ["review-count", param],
     queryFn: () => api<{ openCount: number }>(`/review/count?${param.slice(1)}`),
     refetchInterval: 60_000,
     staleTime: 30_000,
+    enabled: owner,
   });
+  if (!owner) return null;
   const items = [
     { to: "/", label: "Library", icon: LayoutGrid, end: true },
     { to: "/people", label: "People", icon: Users },

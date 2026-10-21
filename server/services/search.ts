@@ -1,5 +1,6 @@
 import type pg from "pg";
 import type { SearchResponse, SearchGroup } from "../../shared/types.ts";
+import { visibleInteractionsSql, type Scope } from "../auth/scope.ts";
 
 export interface SearchFilters {
   q: string;
@@ -39,7 +40,7 @@ export function splitMarked(s: string): Array<{ t: string; m: boolean }> {
  * by group. Only the three lines shown per group go through ts_headline.
  * websearch_to_tsquery gives us quoted phrases, OR and -exclusion for free.
  */
-export async function searchSegments(pool: pg.Pool, f: SearchFilters): Promise<SearchResponse> {
+export async function searchSegments(pool: pg.Pool, f: SearchFilters, scope: Scope = { owner: true, workspaceId: null, partyId: null }): Promise<SearchResponse> {
   const started = Date.now();
   const pageSize = Math.min(Math.max(f.pageSize ?? 20, 1), 50);
   const page = Math.max(f.page ?? 1, 1);
@@ -52,6 +53,7 @@ export async function searchSegments(pool: pg.Pool, f: SearchFilters): Promise<S
     return `$${params.length}`;
   };
   const where: string[] = [];
+  if (!scope.owner) where.push(visibleInteractionsSql(scope, params));
   if (f.from) where.push(`i.occurred_at >= ${p(f.from)}::timestamptz`);
   if (f.to) where.push(`i.occurred_at < (${p(f.to)}::date + interval '1 day')`);
   if (f.workspaceId) where.push(`i.workspace_id = ${p(f.workspaceId)}`);

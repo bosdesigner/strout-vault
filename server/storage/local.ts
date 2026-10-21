@@ -139,6 +139,13 @@ export class LocalStorageDriver implements StorageDriver {
     await fsp.rm(dir, { recursive: true, force: true });
   }
 
+  async putObject(input: { key: string; body: Buffer; contentType?: string | null }): Promise<{ bytes: number }> {
+    const dest = this.pathFor(input.key);
+    await fsp.mkdir(path.dirname(dest), { recursive: true });
+    await fsp.writeFile(dest, input.body);
+    return { bytes: input.body.length };
+  }
+
   async presignGet(location: ObjectLocation, opts: { expiresInSec?: number } = {}): Promise<PresignedUrl | null> {
     if (!this.canServe(location.storage, location.key)) return null;
     return this.signedUrl("/api/storage/local/object", { key: location.key }, opts.expiresInSec ?? 6 * 3600);

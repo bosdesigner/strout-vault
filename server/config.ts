@@ -28,6 +28,15 @@ const envSchema = z.object({
   LOGIN_RATE_WINDOW_MS: z.coerce.number().int().positive().default(15 * 60 * 1000),
   // Session lifetime in seconds (default 30 days).
   SESSION_TTL_SEC: z.coerce.number().int().positive().default(30 * 24 * 3600),
+  // Contractor logins: magic links by email (Resend). Without RESEND_API_KEY links are logged, not sent.
+  RESEND_API_KEY: z.string().optional(),
+  MAIL_FROM: z.string().default("Strout Vault <vault@example.com>"),
+  MAGIC_LINK_TTL_MIN: z.coerce.number().int().positive().default(20),
+  // Tracked phone numbers (Twilio). Webhooks are refused until both are set.
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  // Test-only hook: exposes the last sent email at /api/_test/last-mail (never in production).
+  EXPOSE_TEST_MAIL: z.enum(["0", "1"]).default("0"),
 });
 
 export type Config = z.infer<typeof envSchema> & {

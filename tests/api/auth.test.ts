@@ -22,7 +22,7 @@ describe("auth", () => {
     expect(res.status).toBe(200);
     expect(res.body.db).toBe("ok");
     expect(res.body.storage).toBe("ok");
-    expect(res.body.schema.version).toMatch(/^v0\.2 recordings/);
+    expect(res.body.schema.version).toMatch(/^v0\.\d+ /);
     expect(JSON.stringify(res.body)).not.toMatch(/postgres:\/\/|secret/i);
   });
 

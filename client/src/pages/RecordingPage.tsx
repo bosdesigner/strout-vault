@@ -7,6 +7,7 @@ import type { ClipCandidateItem, RecordingDetail, TranscriptLine } from "@shared
 import { formatBytes, formatDate, formatDuration, formatTimestamp, isReady, SOURCE_LABEL, statusLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useMe } from "@/hooks/useAuth";
 import { VideoPlayer, type VideoHandle } from "@/components/VideoPlayer";
 import { Transcript } from "@/components/Transcript";
 import { InlineEdit } from "@/components/InlineEdit";
@@ -31,6 +32,8 @@ export default function RecordingPage() {
   const video = useRef<VideoHandle>(null);
   const [time, setTime] = useState(startAt ?? 0);
   const isDesktop = useMediaQuery("(min-width: 1024px)");
+  const me = useMe();
+  const owner = me.data?.user.role === "owner";
   const [newPerson, setNewPerson] = useState<Array<{ id: number; name: string }>>([]);
   const [newLabel, setNewLabel] = useState<string>("");
   const [newProject, setNewProject] = useState<string>("");
@@ -79,7 +82,7 @@ export default function RecordingPage() {
   const projectOptions = useQuery({
     queryKey: ["projects", "", detail.data?.workspace?.id ? `&workspace=${detail.data.workspace.id}` : ""],
     queryFn: () => api<{ items: ProjectListItem[] }>(`/projects?${detail.data?.workspace?.id ? `workspace=${encodeURIComponent(detail.data.workspace.id)}` : ""}`),
-    enabled: detail.isSuccess,
+    enabled: detail.isSuccess && owner,
     staleTime: 60_000,
   });
   const clipStatus = useMutation({
@@ -114,7 +117,7 @@ export default function RecordingPage() {
   const r = detail.data;
 
   const transcript = (
-    <Transcript lines={segments.data?.lines} anchored={segments.data?.anchored ?? true} currentTime={time} onSeek={(s) => seek(s, true)} initialSeconds={startAt} />
+    <Transcript lines={segments.data?.lines} anchored={segments.data?.anchored ?? true} currentTime={time} onSeek={(s) => seek(s, true)} initialSeconds={startAt} linkSpeakers={owner} />
   );
 
   return (
@@ -134,16 +137,20 @@ export default function RecordingPage() {
               <>
                 <div className="flex items-start gap-2">
                   <SourceIcon source={r.source} className="mt-2" />
-                  <InlineEdit
-                    as="h1"
-                    label="Title"
-                    value={r.title ?? ""}
-                    placeholder="Untitled recording"
-                    className="text-lg font-semibold leading-snug tracking-tight"
-                    inputClassName="text-lg font-semibold"
-                    testId="title"
-                    onSave={(title) => patch.mutateAsync({ title })}
-                  />
+                  {owner ? (
+                    <InlineEdit
+                      as="h1"
+                      label="Title"
+                      value={r.title ?? ""}
+                      placeholder="Untitled recording"
+                      className="text-lg font-semibold leading-snug tracking-tight"
+                      inputClassName="text-lg font-semibold"
+                      testId="title"
+                      onSave={(title) => patch.mutateAsync({ title })}
+                    />
+                  ) : (
+                    <h1 className="text-lg font-semibold leading-snug tracking-tight" data-testid="title">{r.title?.trim() || "Untitled recording"}</h1>
+                  )}
                 </div>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
                   <time dateTime={r.occurredAt ?? undefined} className="tabular">{formatDate(r.occurredAt, { withTime: true }) || "Undated"}</time>
@@ -156,7 +163,11 @@ export default function RecordingPage() {
                   {r.workspace && <Badge variant="outline">{r.workspace.name}</Badge>}
                   <StatusChip status={r.pipelineStatus} error={r.pipelineError} />
                 </div>
-                <TagEditor tags={r.tags} onChange={(tags) => patch.mutateAsync({ tags })} />
+                {owner ? (
+                  <TagEditor tags={r.tags} onChange={(tags) => patch.mutateAsync({ tags })} />
+                ) : r.tags.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">{r.tags.map((t) => <Badge key={t} variant="secondary">{t}</Badge>)}</div>
+                ) : null}
                 {r.pipelineStatus === "failed" && r.pipelineError && (
                   <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">{r.pipelineError}</p>
                 )}
@@ -194,7 +205,7 @@ export default function RecordingPage() {
                     {r.participants.map((p) => (
                       <li key={p.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5">
                         {p.kind === "org" ? <Building2 className="h-4 w-4 text-muted-foreground" /> : <User className="h-4 w-4 text-muted-foreground" />}
-                        <Link to={`/p/${p.id}`} className="font-medium underline-offset-2 hover:underline">{p.name}</Link>
+                        {owner ? <Link to={`/p/${p.id}`} className="font-medium underline-offset-2 hover:underline">{p.name}</Link> : <span className="font-medium">{p.name}</span>}
                         {p.speakerLabel && p.speakerLabel !== p.name && <span className="text-xs text-muted-foreground">as {p.speakerLabel}</span>}
                         <span className="flex flex-wrap gap-1 sm:ml-auto">
                           {p.roles.map((role) => (
@@ -209,6 +220,7 @@ export default function RecordingPage() {
                   </ul>
                 )}
                 {/* Tag a person by hand, optionally naming which speaker label is theirs. */}
+                {owner && (
                 <form
                   className="mt-3 flex flex-wrap items-end gap-2 rounded-lg border border-dashed p-3"
                   data-testid="tag-person"
@@ -242,9 +254,10 @@ export default function RecordingPage() {
                     <span className="w-full text-xs text-muted-foreground">{addParticipant.data.linesAssigned} transcript lines assigned.</span>
                   )}
                 </form>
+                )}
 
-                <h3 className="mb-1.5 mt-5 text-sm font-medium">Projects</h3>
-                {r.projects.length > 0 && (
+                {owner && <h3 className="mb-1.5 mt-5 text-sm font-medium">Projects</h3>}
+                {owner && r.projects.length > 0 && (
                   <ul className="mb-2 flex flex-wrap gap-1.5" data-testid="linked-projects">
                     {r.projects.map((pr) => (
                       <li key={pr.id}>
@@ -255,6 +268,7 @@ export default function RecordingPage() {
                     ))}
                   </ul>
                 )}
+                {owner && (
                 <form
                   className="flex flex-wrap items-center gap-2"
                   data-testid="link-project"
@@ -276,6 +290,7 @@ export default function RecordingPage() {
                   </Select>
                   <Button type="submit" size="sm" variant="outline" className="h-8" disabled={!newProject || linkProject.isPending} data-testid="link-project-save">Link</Button>
                 </form>
+                )}
               </TabsContent>
               <TabsContent value="facts">
                 {r.facts.length === 0 ? (
@@ -327,7 +342,7 @@ export default function RecordingPage() {
                             {c.status === "new" ? `score ${c.score}` : c.status}
                           </Badge>
                         </div>
-                        {c.status !== "cut" && (
+                        {owner && c.status !== "cut" && (
                           <div className="mt-2 flex gap-2">
                             <Button size="sm" variant={c.status === "approved" ? "secondary" : "outline"} disabled={c.status === "approved" || clipStatus.isPending} onClick={() => clipStatus.mutate({ clipId: c.id, status: "approved" })} data-testid="approve-clip">
                               <ThumbsUp /> Approve

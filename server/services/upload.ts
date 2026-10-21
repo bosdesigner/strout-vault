@@ -51,8 +51,11 @@ export async function finishUpload(
   pool: pg.Pool,
   storage: StorageDriver,
   input: UploadFinishInput,
-  opts: { uploadedBy?: number | null } = {},
+  opts: { uploadedBy?: number | null; forceWorkspaceId?: string | null } = {},
 ): Promise<{ interactionId: number; mediaId: number }> {
+  // A contractor's upload always lands in their workspace, tagged with them, so they can see it afterwards.
+  if (opts.forceWorkspaceId !== undefined && opts.forceWorkspaceId !== null) input = { ...input, workspaceId: opts.forceWorkspaceId };
+  if (opts.uploadedBy) input = { ...input, partyIds: [...new Set([...input.partyIds, opts.uploadedBy])] };
   assertSafeKey(input.key);
   if (!input.key.startsWith("uploads/")) throw new UploadError(400, "bad_key", "key must be under uploads/");
   if (!/^[a-f0-9]{64}$/i.test(input.sha256)) throw new UploadError(400, "bad_sha256", "sha256 must be 64 hex chars");

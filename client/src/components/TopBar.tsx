@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { LogOut, Moon, Search, Sun, Upload, Vault } from "lucide-react";
+import { KeyRound, LogOut, Moon, Search, Sun, Upload, Vault } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -14,7 +14,8 @@ import { useWorkspace } from "@/lib/workspace";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { cn } from "@/lib/utils";
 
-export function TopBar({ user }: { user: { email: string } }) {
+export function TopBar({ user }: { user: { email: string; role: string; displayName?: string | null; workspaceId?: string | null } }) {
+  const owner = user.role === "owner";
   const navigate = useNavigate();
   const location = useLocation();
   const [params] = useSearchParams();
@@ -30,6 +31,7 @@ export function TopBar({ user }: { user: { email: string } }) {
     queryFn: () => api<{ openCount: number }>(`/review/count?${param.slice(1)}`),
     refetchInterval: 60_000,
     staleTime: 30_000,
+    enabled: owner,
   });
 
   useEffect(() => {
@@ -63,7 +65,7 @@ export function TopBar({ user }: { user: { email: string } }) {
       "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground hover:bg-accent",
       isActive && "bg-accent text-foreground",
     );
-  const nav = (
+  const nav = owner ? (
     <nav aria-label="Primary" className="flex items-center gap-0.5 overflow-x-auto scrollbar-thin">
       <NavLink to="/" end className={navClass}>Library</NavLink>
       <NavLink to="/people" className={navClass}>People</NavLink>
@@ -75,7 +77,7 @@ export function TopBar({ user }: { user: { email: string } }) {
         )}
       </NavLink>
     </nav>
-  );
+  ) : null;
 
   return (
     <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
@@ -90,9 +92,11 @@ export function TopBar({ user }: { user: { email: string } }) {
           <Input ref={inputRef} type="search" name="q" aria-label="Search transcripts" placeholder="Search transcripts" className="pl-9" value={q} onChange={(e) => setQ(e.target.value)} />
           <kbd className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 rounded border bg-muted px-1.5 text-[11px] text-muted-foreground sm:inline-block">/</kbd>
         </form>
-        <div className="hidden lg:block">
-          <WorkspaceSwitcher className="w-[11rem]" />
-        </div>
+        {owner && (
+          <div className="hidden lg:block">
+            <WorkspaceSwitcher className="w-[11rem]" />
+          </div>
+        )}
         <div className="flex shrink-0 items-center gap-1">
           <Button onClick={() => uploadStore.openDialog()} size="sm" className="gap-1.5 px-2.5 sm:px-3" data-testid="upload-button" aria-label="Upload">
             <Upload className="h-4 w-4" />
@@ -114,8 +118,17 @@ export function TopBar({ user }: { user: { email: string } }) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuLabel className="max-w-[14rem] truncate">{user.email}</DropdownMenuLabel>
+              <DropdownMenuLabel className="max-w-[14rem] truncate">
+                {user.displayName ? <span className="block text-foreground">{user.displayName}</span> : null}
+                {user.email}
+                {!owner && <span className="block text-[11px] uppercase tracking-wide">Contractor</span>}
+              </DropdownMenuLabel>
               <DropdownMenuSeparator />
+              {owner && (
+                <DropdownMenuItem onSelect={() => navigate("/access")}>
+                  <KeyRound /> Access & numbers
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onSelect={toggle} className="sm:hidden">
                 {isDark ? <Sun /> : <Moon />} {isDark ? "Light mode" : "Dark mode"}
               </DropdownMenuItem>
@@ -127,9 +140,11 @@ export function TopBar({ user }: { user: { email: string } }) {
         </div>
       </div>
       {/* Phones and tablets: the workspace switcher gets its own row; section nav is the bottom tab bar. */}
-      <div className="mx-auto max-w-7xl px-4 pb-2 lg:hidden">
-        <WorkspaceSwitcher className="w-full" />
-      </div>
+      {owner && (
+        <div className="mx-auto max-w-7xl px-4 pb-2 lg:hidden">
+          <WorkspaceSwitcher className="w-full" />
+        </div>
+      )}
     </header>
   );
 }

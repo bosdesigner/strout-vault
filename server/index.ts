@@ -2,13 +2,19 @@ import { loadConfig } from "./config.ts";
 import { createDb } from "./db/client.ts";
 import { createStorage } from "./storage/index.ts";
 import { EnvAdminAuthProvider } from "./auth/envAdmin.ts";
+import { CompositeAuthProvider, MembershipAuthProvider } from "./auth/membership.ts";
+import { createMailer } from "./mail/index.ts";
 import { createApp } from "./app.ts";
 
 async function main() {
   const config = loadConfig();
   const dbHandle = createDb(config.DATABASE_URL);
   const storage = createStorage(config);
-  const auth = new EnvAdminAuthProvider(config.ADMIN_EMAIL, config.ADMIN_PASSWORD_HASH);
+  const mailer = createMailer(config);
+  const auth = new CompositeAuthProvider([
+    new EnvAdminAuthProvider(config.ADMIN_EMAIL, config.ADMIN_PASSWORD_HASH),
+    new MembershipAuthProvider(dbHandle.pool, mailer, { ttlMin: config.MAGIC_LINK_TTL_MIN }),
+  ]);
 
   // Vite middleware only when running from source (tsx). The esbuild bundle in dist/ serves the built client.
   const runningFromSource = import.meta.url.endsWith(".ts");
@@ -18,6 +24,7 @@ async function main() {
     dbHandle,
     storage,
     auth,
+    mailer,
     devMiddleware: isDev
       ? async (app) => {
           // Vite in middleware mode: one process serves API and client with HMR.

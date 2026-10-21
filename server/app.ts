@@ -21,12 +21,20 @@ import { clipsRouter } from "./routes/clips.ts";
 import { uploadsRouter } from "./routes/uploads.ts";
 import { localStorageRouter } from "./routes/localStorage.ts";
 import { HttpError } from "./routes/util.ts";
+import { requireOwner } from "./auth/scope.ts";
+import { membershipsRouter, trackedNumbersRouter, callsRouter } from "./routes/access.ts";
+import { twilioWebhooksRouter } from "./routes/twilioWebhooks.ts";
+import type { Mailer } from "./mail/types.ts";
+import { MemoryMailer } from "./mail/memory.ts";
 
 export interface CreateAppOptions {
   config: Config;
   dbHandle: DbHandle;
   storage: StorageDriver;
   auth: AuthProvider;
+  mailer?: Mailer;
+  /** Twilio recordings are fetched with this (tests inject a fake). */
+  fetchImpl?: typeof fetch;
   /** Serves the built client from dist/client when true (production). */
   serveStatic?: boolean;
   /** Dev-only hook: mount Vite's middleware for the client. */
@@ -42,6 +50,8 @@ export async function createApp(opts: CreateAppOptions): Promise<{ app: Express;
     db: dbHandle.db,
     storage,
     auth,
+    mailer: opts.mailer ?? new MemoryMailer(false),
+    fetchImpl: opts.fetchImpl ?? fetch,
     sessionOptions: { secret: config.SESSION_SECRET, ttlSec: config.SESSION_TTL_SEC, secure },
   };
 
@@ -61,10 +71,19 @@ export async function createApp(opts: CreateAppOptions): Promise<{ app: Express;
 
   // Public: liveness + schema version, no secrets. Everything else needs a login.
   app.use(healthRouter(ctx));
+  // Public but signature-verified: Twilio voice/status/recording webhooks.
+  app.use("/webhooks/twilio", twilioWebhooksRouter(ctx));
 
   const api = express.Router();
   api.use(express.json({ limit: "1mb" }));
   api.use("/auth", authRouter(ctx));
+  // Test-only: the last email the in-memory mailer "sent" (magic links). Never mounted in production.
+  if (config.EXPOSE_TEST_MAIL === "1" && !config.isProd) {
+    api.get("/_test/last-mail", (_req, res) => {
+      const m = ctx.mailer instanceof MemoryMailer ? ctx.mailer.last() : null;
+      res.json({ mail: m });
+    });
+  }
   // Local-driver object routes: the browser PUTs parts and <video> GETs bytes here. They need a
   // session plus the HMAC signature in the URL (like a presigned S3 URL), but no CSRF header,
   // because neither Uppy's part PUT nor a <video> tag can send one.
@@ -73,12 +92,16 @@ export async function createApp(opts: CreateAppOptions): Promise<{ app: Express;
   api.use("/interactions", interactionsRouter(ctx));
   api.use("/search", searchRouter(ctx));
   api.use("/parties", peopleRouter(ctx));
-  api.use("/roles", rolesRouter(ctx));
-  api.use("/projects", projectsRouter(ctx));
-  api.use("/review", reviewRouter(ctx));
   api.use("/workspaces", workspacesRouter(ctx));
-  api.use("/clips", clipsRouter(ctx));
   api.use("/uploads", uploadsRouter(ctx));
+  // Owner-only sections.
+  api.use("/roles", requireOwner(), rolesRouter(ctx));
+  api.use("/projects", requireOwner(), projectsRouter(ctx));
+  api.use("/review", requireOwner(), reviewRouter(ctx));
+  api.use("/clips", requireOwner(), clipsRouter(ctx));
+  api.use("/memberships", requireOwner(), membershipsRouter(ctx));
+  api.use("/tracked-numbers", requireOwner(), trackedNumbersRouter(ctx));
+  api.use("/calls", requireOwner(), callsRouter(ctx));
   api.use((_req, res) => {
     res.status(404).json({ error: "not_found" });
   });

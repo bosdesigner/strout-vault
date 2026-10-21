@@ -4,7 +4,7 @@ A private web app that holds every recorded conversation (Zoom meetings, phone c
 
 One Node process serves the Express API and the React client. It reads and writes the existing relationship-engine Postgres (Neon) and talks to Cloudflare R2 (new uploads) and Backblaze B2 (archived originals) through the S3 API. Transcription happens elsewhere (the meeting-vault Python service picks up rows from the `jobs` table); this app only enqueues jobs and shows status.
 
-**Phase 1**: library, recording page, search, upload. **Phase 2**: people and companies, projects, the workspace switcher, the review queue, and hand-tagging on the recording page. Phase 3 adds contractor logins and call capture.
+**Phase 1**: library, recording page, search, upload. **Phase 2**: people and companies, projects, the workspace switcher, the review queue, and hand-tagging on the recording page. **Phase 3**: contractor logins (magic links) scoped to one workspace, and tracked phone numbers (Twilio) whose recordings land in the vault.
 
 ---
 
@@ -38,7 +38,10 @@ Open the **Secrets** tab and add each of these (names must match exactly):
 | `B2_APPLICATION_KEY` | Backblaze application key. |
 | `B2_BUCKET` | `anotherstory-meeting-vault` |
 | `B2_REGION` | Region in the bucket's S3 endpoint, e.g. `us-west-004` (endpoint becomes `https://s3.<region>.backblazeb2.com`). |
-| `PUBLIC_URL` | The deployed origin, e.g. `https://strout-vault.replit.app` (no trailing slash). Used for secure cookies and the R2 CORS rule below. |
+| `PUBLIC_URL` | The deployed origin, e.g. `https://strout-vault.replit.app` (no trailing slash). Used for secure cookies, the links in sign-in emails, Twilio webhook URLs and the R2 CORS rule below. |
+| `RESEND_API_KEY` | (Phase 3) Resend API key used to email contractor sign-in links. Without it links are only written to the server log. |
+| `MAIL_FROM` | (Phase 3) Sender for those emails, e.g. `Strout Vault <vault@yourdomain.com>` (a domain verified in Resend). |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | (Phase 3) Needed to verify Twilio webhook signatures and to fetch call recordings. Webhooks return 503 until both are set. |
 
 `PORT` is set by Replit itself. Optional tuning variables are listed in [`.env.example`](.env.example).
 
@@ -60,11 +63,13 @@ Open the **Secrets** tab and add each of these (names must match exactly):
 
 ### 3. Apply the migrations to Neon
 
-`db/migrations/0001_relationship_engine.sql` and `0002_recordings.sql` are the production schema and are already applied to Neon (2026-10-20). Phase 1 adds **no new migration**. The app never creates, alters or drops anything at startup; any future change arrives only as a new numbered file `db/migrations/0003_<name>.sql`, listed in its pull request for you to apply by hand:
+`db/migrations/0001_relationship_engine.sql` and `0002_recordings.sql` are the production schema and are already applied to Neon (2026-10-20). Phases 1 and 2 add no migration. **Phase 3 adds `db/migrations/0003_access_and_calls.sql`** (tables `memberships`, `login_tokens`, `tracked_numbers`, `calls`; additive, `if not exists`, safe to re-run). The app never creates, alters or drops anything at startup, so apply it by hand before deploying Phase 3:
 
 ```bash
-psql "$DATABASE_URL" -f db/migrations/0003_<name>.sql
+psql "$DATABASE_URL" -f db/migrations/0003_access_and_calls.sql
 ```
+
+`/healthz` then reports `schema.version` starting with `v0.3`.
 
 ### 4. Click Deploy
 
@@ -107,7 +112,7 @@ Useful scripts:
 | `npm run typecheck` | `tsc` for server and client |
 | `npm test` | Vitest unit + API tests (seeds `strout_vault_test`) |
 | `npm run test:e2e` | Playwright end-to-end tests (seeds `strout_vault_e2e`, runs the app on :3100) |
-| `npm run screenshots` | Every page at 1440 px and 390 px into `docs/screenshots/phase-1/` (needs `npm run dev` running) |
+| `npm run screenshots` | Every page at 1440 px and 390 px into `docs/screenshots/phase-1/` (needs `npm run dev` running); `SCREENSHOT_PHASE=phase-2` / `phase-3` for the later pages (Phase 3 needs the dev server started with `EXPOSE_TEST_MAIL=1`) |
 | `npm run db:bench` | 400k generated segments + `EXPLAIN ANALYZE` of the search query into `docs/search-explain-analyze.md` |
 | `npm run hash-password` | bcrypt hash for `ADMIN_PASSWORD_HASH` |
 
@@ -146,10 +151,12 @@ tests/             unit + API (Vitest), end-to-end (Playwright)
 
 **People, projects and the switcher.** `/people` and `/p/:id` show role chips per workspace ("Another Story · contractor · Houston (Conroe)") and let you edit contact fields, add roles (roles are never deleted, only marked `former`), link organizations and create people. `/projects` and `/projects/:id` show parties with their roles, linked recordings and facts. The workspace switcher in the top bar scopes the library, search, people, projects and the review queue. On the recording page you can tag a person by hand (optionally naming which speaker label is theirs) and link projects.
 
-**Auth is swappable.** `AuthProvider.verifyPassword()` is the only thing that knows about the env admin; sessions carry `sub`, `role`, and (for Phase 3) `workspaceId` / `partyId`.
+**Contractor logins (Phase 3).** `AuthProvider` has two implementations behind a composite: the env admin (password) and `MembershipAuthProvider` (magic links). A row in `memberships` (created from **Access & numbers** in the account menu, or `POST /api/memberships`) scopes a login to one workspace and to the contractor's own `parties` row. Requesting a link always answers the same way; the token is 32 random bytes, stored only as a SHA-256 hash in `login_tokens`, single-use, and expires after `MAGIC_LINK_TTL_MIN` (20) minutes. A contractor's session carries `workspaceId` and `partyId`; every list and detail query is filtered by `visibleInteractionsSql()`: interactions in their workspace where they are an `interaction_participants` row **or** `media.uploaded_by` is them. Everything that changes data except uploading is owner-only (403); hidden recordings are 404, never 403. Their uploads are forced into their workspace and tagged with them.
+
+**Tracked numbers (Phase 3, Twilio).** Buy a number in the Twilio console (the app never buys anything), set its voice webhook to `POST <PUBLIC_URL>/webhooks/twilio/voice`, and record it under Access & numbers with the contractor it belongs to and the phone to forward to. On a call the app verifies `X-Twilio-Signature` (HMAC-SHA1 of the URL built from `PUBLIC_URL` plus the sorted form fields), writes a `calls` row (matching the caller id against `parties.phones`), and answers with TwiML: the recording notice, then `<Dial record="record-from-answer-dual">` to the contractor. When Twilio posts the finished recording, the app fetches it once (HTTP basic auth with the account SID and token), writes it to storage under `calls/<yyyy>/<mm>/<CallSid>.mp3`, and in one transaction creates the `interactions` row (`source='contractor_call'`, `pipeline_status='queued'`), the `media` row, `transcribe` + `extract` jobs and the participants (the contractor, plus the caller when matched). Repeated callbacks are no-ops; a failed fetch is recorded on the call and answered with 500 so Twilio retries.
 
 ## Phase status
 
 - [x] Phase 1 — library, recording page, search, upload ([verification](docs/phase-1-verification.md), [screenshots](docs/screenshots/phase-1/))
 - [x] Phase 2 — people, companies, projects, review queue ([verification](docs/phase-2-verification.md), [screenshots](docs/screenshots/phase-2/))
-- [ ] Phase 3 — contractor access and call capture
+- [x] Phase 3 — contractor access and call capture ([verification](docs/phase-3-verification.md), [screenshots](docs/screenshots/phase-3/)); migration `0003` must be applied first

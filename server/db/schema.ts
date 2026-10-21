@@ -288,6 +288,66 @@ export const clips = pgTable("clips", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
+// 0003_access_and_calls ------------------------------------------------------
+export const memberships = pgTable("memberships", {
+  id: id(),
+  email: text("email").notNull(),
+  role: text("role").notNull().default("contractor"), // owner | contractor
+  workspaceId: text("workspace_id").references(() => workspaces.id),
+  partyId: ref("party_id").references(() => parties.id),
+  status: text("status").notNull().default("invited"), // invited | active | disabled
+  displayName: text("display_name"),
+  invitedBy: text("invited_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+});
+
+export const loginTokens = pgTable("login_tokens", {
+  id: id(),
+  membershipId: ref("membership_id").notNull().references(() => memberships.id),
+  tokenHash: text("token_hash").notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  requestedIp: text("requested_ip"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+export const trackedNumbers = pgTable("tracked_numbers", {
+  id: id(),
+  workspaceId: text("workspace_id").references(() => workspaces.id),
+  membershipId: ref("membership_id").references(() => memberships.id),
+  partyId: ref("party_id").references(() => parties.id),
+  phoneNumber: text("phone_number").notNull().unique(),
+  forwardTo: text("forward_to").notNull(),
+  twilioSid: text("twilio_sid"),
+  recordingNotice: text("recording_notice"),
+  status: text("status").notNull().default("active"), // active | paused | released
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+export const calls = pgTable("calls", {
+  id: id(),
+  trackedNumberId: ref("tracked_number_id").references(() => trackedNumbers.id),
+  callSid: text("call_sid").notNull().unique(),
+  direction: text("direction").notNull().default("inbound"),
+  fromNumber: text("from_number"),
+  toNumber: text("to_number"),
+  callerPartyId: ref("caller_party_id").references(() => parties.id),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  endedAt: timestamp("ended_at", { withTimezone: true }),
+  durationSec: integer("duration_sec"),
+  status: text("status"),
+  recordingSid: text("recording_sid"),
+  recordingUrl: text("recording_url"),
+  recordingStatus: text("recording_status"), // pending | stored | failed
+  recordingError: text("recording_error"),
+  mediaId: ref("media_id"),
+  interactionId: ref("interaction_id").references(() => interactions.id),
+  raw: jsonb("raw"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
+
 export type Interaction = typeof interactions.$inferSelect;
 export type Media = typeof media.$inferSelect;
 export type Party = typeof parties.$inferSelect;

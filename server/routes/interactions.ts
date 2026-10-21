@@ -7,6 +7,8 @@ import { searchWithinRecording } from "../services/search.ts";
 import { servableStorages } from "../services/videoSource.ts";
 import { addInteractionParticipant, linkInteractionToProject, speakerLabels } from "../services/projects.ts";
 import { HttpError, intId, parse, wrap } from "./util.ts";
+import { requireOwner, scopeOf } from "../auth/scope.ts";
+import { canSeeInteraction } from "../services/recording.ts";
 
 const SOURCES = ["zoom", "meet", "upload", "iphone_call", "contractor_call"] as const;
 
@@ -53,6 +55,7 @@ export function interactionsRouter(ctx: AppContext): Router {
           limit: q.limit,
         },
         servable,
+        scopeOf(req.session),
       );
       res.json(page);
     }),
@@ -66,7 +69,7 @@ export function interactionsRouter(ctx: AppContext): Router {
         .map((s) => Number(s))
         .filter((n) => Number.isInteger(n) && n > 0)
         .slice(0, 200);
-      res.json({ items: await pipelineStatuses(ctx.pool, ids) });
+      res.json({ items: await pipelineStatuses(ctx.pool, ids, scopeOf(req.session)) });
     }),
   );
 
@@ -74,7 +77,7 @@ export function interactionsRouter(ctx: AppContext): Router {
     "/:id",
     wrap(async (req, res) => {
       const id = intId(req.params.id);
-      const rec = await getRecording(ctx.pool, ctx.storage, id);
+      const rec = await getRecording(ctx.pool, ctx.storage, id, scopeOf(req.session));
       if (!rec) throw new HttpError(404, "recording not found");
       res.json(rec);
     }),
@@ -84,6 +87,7 @@ export function interactionsRouter(ctx: AppContext): Router {
     "/:id/segments",
     wrap(async (req, res) => {
       const id = intId(req.params.id);
+      if (!(await canSeeInteraction(ctx.pool, id, scopeOf(req.session)))) throw new HttpError(404, "recording not found");
       let lines = await getSegments(ctx.pool, id);
       let anchored = true;
       if (!lines.length) {
@@ -102,6 +106,7 @@ export function interactionsRouter(ctx: AppContext): Router {
     "/:id/find",
     wrap(async (req, res) => {
       const id = intId(req.params.id);
+      if (!(await canSeeInteraction(ctx.pool, id, scopeOf(req.session)))) throw new HttpError(404, "recording not found");
       const q = String(req.query.q ?? "").slice(0, 200);
       res.json({ segmentIds: await searchWithinRecording(ctx.pool, id, q) });
     }),
@@ -110,9 +115,14 @@ export function interactionsRouter(ctx: AppContext): Router {
   r.get(
     "/:id/speakers",
     wrap(async (req, res) => {
-      res.json({ items: await speakerLabels(ctx.pool, intId(req.params.id)) });
+      const id = intId(req.params.id);
+      if (!(await canSeeInteraction(ctx.pool, id, scopeOf(req.session)))) throw new HttpError(404, "recording not found");
+      res.json({ items: await speakerLabels(ctx.pool, id) });
     }),
   );
+
+  // Everything below changes data: owner only.
+  r.use(requireOwner());
 
   // Tag a person on this recording by hand, optionally naming which speaker label they are.
   r.post(
