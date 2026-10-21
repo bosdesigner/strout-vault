@@ -134,6 +134,98 @@ export interface RecordingDetail {
   hasTranscriptText: boolean;
   facts: FactItem[];
   clips: ClipCandidateItem[];
+  projects: ProjectRef[];
+  /** Speaker labels in the transcript and which person (if any) each is assigned to. */
+  speakers: Array<{ label: string; partyId: number | null; lines: number }>;
+}
+
+export interface ProjectRef {
+  id: number;
+  name: string;
+  status: string | null;
+  workspaceId: string;
+  workspaceName: string;
+}
+
+export interface PersonListItem {
+  id: number;
+  kind: "person" | "org" | string;
+  name: string;
+  location: string | null;
+  emails: string[];
+  roles: RoleChip[];
+  detail: string | null;
+  interactionCount: number;
+  lastSeenAt: string | null;
+  orgs: Array<{ id: number; name: string }>;
+}
+
+export interface PersonRole extends RoleChip {
+  id: number;
+  startedAt: string | null;
+  endedAt: string | null;
+}
+
+export interface PersonDetail {
+  id: number;
+  kind: "person" | "org" | string;
+  name: string;
+  emails: string[];
+  phones: string[];
+  location: string | null;
+  website: string | null;
+  notes: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  roles: PersonRole[];
+  affiliations: Array<{ id: number; title: string | null; isCurrent: boolean | null; other: { id: number; name: string; kind: string } }>;
+  interactions: Array<{ id: number; title: string | null; occurredAt: string | null; durationSec: number | null; source: string | null; pipelineStatus: string | null; workspaceId: string | null; speakerLabel: string | null }>;
+  facts: Array<FactItem & { interaction: { id: number; title: string | null; occurredAt: string | null } | null }>;
+  projects: Array<ProjectRef & { role: string }>;
+}
+
+export interface ProjectListItem {
+  id: number;
+  workspaceId: string;
+  workspaceName: string;
+  name: string;
+  address: string | null;
+  status: string | null;
+  partyCount: number;
+  interactionCount: number;
+  openFacts: number;
+  lastActivityAt: string | null;
+  parties: Array<{ id: number; name: string; role: string }>;
+}
+
+export interface ProjectDetail {
+  id: number;
+  workspaceId: string;
+  workspaceName: string;
+  name: string;
+  address: string | null;
+  status: string | null;
+  notes: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  parties: Array<{ id: number; kind: string; name: string; projectRole: string; roles: RoleChip[] }>;
+  interactions: Array<{ id: number; title: string | null; occurredAt: string | null; durationSec: number | null; source: string | null; pipelineStatus: string | null }>;
+  facts: Array<FactItem & { interaction: { id: number; title: string | null } | null }>;
+}
+
+export interface ReviewItem {
+  id: number;
+  itemType: string;
+  proposal: Record<string, unknown>;
+  reason: string | null;
+  status: "open" | "approved" | "rejected" | string;
+  createdAt: string | null;
+  decidedAt: string | null;
+  interaction: { id: number; title: string | null; occurredAt: string | null; workspaceId: string | null } | null;
+  party: { id: number; name: string } | null;
+  speakerLabel: string | null;
+  startSec: number | null;
+  confidence: number | null;
 }
 
 export interface SearchLinePart {

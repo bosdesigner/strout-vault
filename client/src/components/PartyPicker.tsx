@@ -13,18 +13,20 @@ interface Props {
   placeholder?: string;
   id?: string;
   className?: string;
+  /** Restrict suggestions to people or organizations. */
+  kind?: "person" | "org";
 }
 
 /** Type-ahead over parties. Selected people show as removable chips. */
-export function PartyPicker({ value, onChange, multiple = true, placeholder = "Add a person…", id, className }: Props) {
+export function PartyPicker({ value, onChange, multiple = true, placeholder = "Add a person…", id, className, kind }: Props) {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const listId = useId();
   const wrapRef = useRef<HTMLDivElement>(null);
   const { data } = useQuery({
-    queryKey: ["parties", q],
-    queryFn: () => api<{ items: PartySuggestion[] }>(`/parties?q=${encodeURIComponent(q)}&limit=8`),
+    queryKey: ["parties", q, kind ?? ""],
+    queryFn: () => api<{ items: PartySuggestion[] }>(`/parties?q=${encodeURIComponent(q)}&limit=8${kind ? `&kind=${kind}` : ""}`),
     enabled: open,
     staleTime: 60_000,
   });

@@ -5,6 +5,7 @@ import { listLibrary, pipelineStatuses } from "../services/library.ts";
 import { getRecording, getSegments, linesFromPlainTranscript, updateRecording } from "../services/recording.ts";
 import { searchWithinRecording } from "../services/search.ts";
 import { servableStorages } from "../services/videoSource.ts";
+import { addInteractionParticipant, linkInteractionToProject, speakerLabels } from "../services/projects.ts";
 import { HttpError, intId, parse, wrap } from "./util.ts";
 
 const SOURCES = ["zoom", "meet", "upload", "iphone_call", "contractor_call"] as const;
@@ -103,6 +104,43 @@ export function interactionsRouter(ctx: AppContext): Router {
       const id = intId(req.params.id);
       const q = String(req.query.q ?? "").slice(0, 200);
       res.json({ segmentIds: await searchWithinRecording(ctx.pool, id, q) });
+    }),
+  );
+
+  r.get(
+    "/:id/speakers",
+    wrap(async (req, res) => {
+      res.json({ items: await speakerLabels(ctx.pool, intId(req.params.id)) });
+    }),
+  );
+
+  // Tag a person on this recording by hand, optionally naming which speaker label they are.
+  r.post(
+    "/:id/participants",
+    wrap(async (req, res) => {
+      const id = intId(req.params.id);
+      const body = parse(z.object({ partyId: z.coerce.number().int().positive(), speakerLabel: z.string().trim().min(1).max(100).nullable().optional() }), req.body);
+      const exists = await ctx.pool.query(`select 1 from interactions where id = $1`, [id]);
+      if (!exists.rowCount) throw new HttpError(404, "recording not found");
+      const party = await ctx.pool.query(`select 1 from parties where id = $1`, [body.partyId]);
+      if (!party.rowCount) throw new HttpError(400, "unknown person");
+      const out = await addInteractionParticipant(ctx.pool, id, body.partyId, body.speakerLabel ?? null);
+      res.status(201).json({ ...out, recording: await getRecording(ctx.pool, ctx.storage, id) });
+    }),
+  );
+
+  // Link this recording to a project by hand.
+  r.post(
+    "/:id/projects",
+    wrap(async (req, res) => {
+      const id = intId(req.params.id);
+      const body = parse(z.object({ projectId: z.coerce.number().int().positive() }), req.body);
+      const exists = await ctx.pool.query(`select 1 from interactions where id = $1`, [id]);
+      if (!exists.rowCount) throw new HttpError(404, "recording not found");
+      const project = await ctx.pool.query(`select 1 from projects where id = $1`, [body.projectId]);
+      if (!project.rowCount) throw new HttpError(400, "unknown project");
+      await linkInteractionToProject(ctx.pool, id, body.projectId);
+      res.status(201).json(await getRecording(ctx.pool, ctx.storage, id));
     }),
   );
 

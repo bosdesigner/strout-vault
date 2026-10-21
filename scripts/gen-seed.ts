@@ -498,7 +498,9 @@ clipCandidates.push({ rec: sample2.id, start: 38, end: 66, score: 88, hook: "Pel
 const review: Array<{ type: string; proposal: Record<string, unknown>; reason: string; rec: number }> = [];
 for (const r of transcribable.filter((x) => x.source !== "zoom").slice(0, 5)) {
   const unknown = r.speakers.find((s) => s.partyId === null);
-  const guess = r.participants.find((p) => p !== P["Ben Strout"]);
+  // Prefer someone from the workspace who is not tagged yet; otherwise the tagged person whose lines are unassigned.
+  const candidates = (r.ws ? WS_PEOPLE[r.ws] : []).filter((p) => !r.participants.includes(p));
+  const guess = candidates[0] ?? r.participants.find((p) => p !== P["Ben Strout"]);
   if (!unknown || !guess) continue;
   const seg = segs.find((x) => x.rec === r.id && x.speaker === unknown.label);
   const conf = round2(between(0.62, 0.93));

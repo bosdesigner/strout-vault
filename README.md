@@ -4,8 +4,7 @@ A private web app that holds every recorded conversation (Zoom meetings, phone c
 
 One Node process serves the Express API and the React client. It reads and writes the existing relationship-engine Postgres (Neon) and talks to Cloudflare R2 (new uploads) and Backblaze B2 (archived originals) through the S3 API. Transcription happens elsewhere (the meeting-vault Python service picks up rows from the `jobs` table); this app only enqueues jobs and shows status.
 
-**Phase 1** (this release): library, recording page, search, upload.
-Phase 2 adds people/companies/projects and the review queue; Phase 3 adds contractor logins and call capture.
+**Phase 1**: library, recording page, search, upload. **Phase 2**: people and companies, projects, the workspace switcher, the review queue, and hand-tagging on the recording page. Phase 3 adds contractor logins and call capture.
 
 ---
 
@@ -143,10 +142,14 @@ tests/             unit + API (Vitest), end-to-end (Playwright)
 
 **Search.** One GIN probe, `segments.tsv @@ websearch_to_tsquery('english', $q)`, grouped per recording, ranked by best `ts_rank`, paginated by group; only the three lines shown per group go through `ts_headline`. Quoted phrases, `OR` and `-exclude` come from `websearch_to_tsquery`. See [`docs/search-explain-analyze.md`](docs/search-explain-analyze.md) for the plans on 400k segments (20–92 ms).
 
+**Review queue.** `/review` lists `review_queue` rows (open first). Approving a `participant_match` runs one transaction: insert `interaction_participants` (with the speaker label), set `segments.speaker_party_id` for every line of that label that is still unassigned, and mark the item approved with `decided_at`. Rejecting only marks it. Keyboard: `a` approve, `r` reject, `j`/`k` move, `o` open the moment in the call.
+
+**People, projects and the switcher.** `/people` and `/p/:id` show role chips per workspace ("Another Story · contractor · Houston (Conroe)") and let you edit contact fields, add roles (roles are never deleted, only marked `former`), link organizations and create people. `/projects` and `/projects/:id` show parties with their roles, linked recordings and facts. The workspace switcher in the top bar scopes the library, search, people, projects and the review queue. On the recording page you can tag a person by hand (optionally naming which speaker label is theirs) and link projects.
+
 **Auth is swappable.** `AuthProvider.verifyPassword()` is the only thing that knows about the env admin; sessions carry `sub`, `role`, and (for Phase 3) `workspaceId` / `partyId`.
 
 ## Phase status
 
 - [x] Phase 1 — library, recording page, search, upload ([verification](docs/phase-1-verification.md), [screenshots](docs/screenshots/phase-1/))
-- [ ] Phase 2 — people, companies, projects, review queue
+- [x] Phase 2 — people, companies, projects, review queue ([verification](docs/phase-2-verification.md), [screenshots](docs/screenshots/phase-2/))
 - [ ] Phase 3 — contractor access and call capture

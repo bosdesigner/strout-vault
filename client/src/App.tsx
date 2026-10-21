@@ -9,6 +9,12 @@ import RecordingPage from "@/pages/RecordingPage";
 import SearchPage from "@/pages/SearchPage";
 import PersonPage from "@/pages/PersonPage";
 import NotFoundPage from "@/pages/NotFoundPage";
+import PeoplePage from "@/pages/PeoplePage";
+import ProjectsPage from "@/pages/ProjectsPage";
+import ProjectPage from "@/pages/ProjectPage";
+import ReviewPage from "@/pages/ReviewPage";
+import { WorkspaceProvider } from "@/lib/workspace";
+import { MobileNav } from "@/components/MobileNav";
 import { Skeleton } from "@/components/ui/skeleton";
 
 function RequireAuth() {
@@ -31,14 +37,17 @@ function RequireAuth() {
   }
   if (!me.data) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   return (
-    <div className="min-h-screen flex flex-col">
-      <TopBar user={me.data.user} />
-      <main className="flex-1">
-        <Outlet />
-      </main>
-      <UploadDialog />
-      <UploadTray />
-    </div>
+    <WorkspaceProvider>
+      <div className="min-h-screen flex flex-col">
+        <TopBar user={me.data.user} />
+        <main className="flex-1 pb-16 lg:pb-0">
+          <Outlet />
+        </main>
+        <MobileNav />
+        <UploadDialog />
+        <UploadTray />
+      </div>
+    </WorkspaceProvider>
   );
 }
 
@@ -50,7 +59,11 @@ export default function App() {
         <Route path="/" element={<LibraryPage />} />
         <Route path="/r/:id" element={<RecordingPage />} />
         <Route path="/search" element={<SearchPage />} />
+        <Route path="/people" element={<PeoplePage />} />
         <Route path="/p/:id" element={<PersonPage />} />
+        <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/projects/:id" element={<ProjectPage />} />
+        <Route path="/review" element={<ReviewPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

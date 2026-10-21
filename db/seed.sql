@@ -8506,10 +8506,10 @@ insert into clip_candidates (interaction_id, start_sec, end_sec, score, hook, wh
   (38, 38, 66, 88, 'Pelican tiles against stucco: the sample that settled it', 'Visual payoff plus a clear decision in under thirty seconds.', 'tiktok,reels', 'new', 'claude-sonnet');
 
 insert into review_queue (item_type, proposal, reason, interaction_id, status) values
-  ('participant_match', '{"interaction_id":3,"speaker_label":"Speaker 2","party_id":3,"confidence":0.85,"start_sec":51.1}'::jsonb, 'Speaker 2 is probably Maria Delgado (0.85)', 3, 'open'),
-  ('participant_match', '{"interaction_id":5,"speaker_label":"Speaker 2","party_id":3,"confidence":0.7,"start_sec":74}'::jsonb, 'Speaker 2 is probably Maria Delgado (0.70)', 5, 'open'),
-  ('participant_match', '{"interaction_id":7,"speaker_label":"Speaker 2","party_id":4,"confidence":0.82,"start_sec":95.8}'::jsonb, 'Speaker 2 is probably Tom Ashworth (0.82)', 7, 'open'),
-  ('participant_match', '{"interaction_id":11,"speaker_label":"Speaker 2","party_id":2,"confidence":0.76,"start_sec":67.2}'::jsonb, 'Speaker 2 is probably Kevin McGuire (0.76)', 11, 'open'),
+  ('participant_match', '{"interaction_id":3,"speaker_label":"Speaker 2","party_id":13,"confidence":0.85,"start_sec":51.1}'::jsonb, 'Speaker 2 is probably Carlos Mendes (0.85)', 3, 'open'),
+  ('participant_match', '{"interaction_id":5,"speaker_label":"Speaker 2","party_id":13,"confidence":0.7,"start_sec":74}'::jsonb, 'Speaker 2 is probably Carlos Mendes (0.70)', 5, 'open'),
+  ('participant_match', '{"interaction_id":7,"speaker_label":"Speaker 2","party_id":7,"confidence":0.82,"start_sec":95.8}'::jsonb, 'Speaker 2 is probably Lena Fischer (0.82)', 7, 'open'),
+  ('participant_match', '{"interaction_id":11,"speaker_label":"Speaker 2","party_id":10,"confidence":0.76,"start_sec":67.2}'::jsonb, 'Speaker 2 is probably Sam Whitaker (0.76)', 11, 'open'),
   ('participant_match', '{"interaction_id":18,"speaker_label":"Speaker 2","party_id":11,"confidence":0.89,"start_sec":0.4}'::jsonb, 'Speaker 2 is probably Rachel Kim (0.89)', 18, 'open');
 
 insert into relationships (from_party_id, to_party_id, kind, workspace_id, first_seen, last_seen, evidence_count) values
