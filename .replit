@@ -1,0 +1,19 @@
+# Strout Vault on Replit.
+# Workspace: `npm run dev` serves API + client from one process on PORT.
+# Deployment: build once, then `npm start` serves dist/ on PORT.
+run = "npm run dev"
+entrypoint = "server/index.ts"
+modules = ["nodejs-20"]
+hidden = [".config", "dist", "node_modules", ".data"]
+
+[deployment]
+deploymentTarget = "autoscale"
+build = ["npm", "run", "build"]
+run = ["npm", "start"]
+
+[[ports]]
+localPort = 3000
+externalPort = 80
+
+[nix]
+channel = "stable-24_05"
