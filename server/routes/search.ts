@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { AppContext } from "../context.ts";
 import { searchSegments } from "../services/search.ts";
 import { parse, wrap } from "./util.ts";
+import { scopeOf } from "../auth/scope.ts";
 
 const schema = z.object({
   q: z.string().max(500).default(""),
@@ -28,7 +29,7 @@ export function searchRouter(ctx: AppContext): Router {
         to: q.to,
         workspaceId: q.workspace,
         partyId: q.party,
-      });
+      }, scopeOf(req.session));
       res.json(out);
     }),
   );

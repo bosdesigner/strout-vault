@@ -42,6 +42,9 @@ export interface StorageDriver {
   completeMultipartUpload(input: { key: string; uploadId: string; parts: MultipartPart[] }): Promise<{ location: string }>;
   abortMultipartUpload(input: { key: string; uploadId: string }): Promise<void>;
 
+  /** Server-side write of a whole object (call recordings fetched from Twilio). Returns bytes written. */
+  putObject(input: { key: string; body: Buffer; contentType?: string | null }): Promise<{ bytes: number }>;
+
   /** Presigned GET for playback or download. Returns null when this driver cannot serve the location. */
   presignGet(location: ObjectLocation, opts?: { expiresInSec?: number }): Promise<PresignedUrl | null>;
   /** Object metadata, or null when the object does not exist. */

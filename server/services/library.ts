@@ -1,6 +1,7 @@
 import type pg from "pg";
 import type { LibraryCard, LibraryPage } from "../../shared/types.ts";
 import { firstMeaningfulLine } from "../../shared/text.ts";
+import { visibleInteractionsSql, type Scope } from "../auth/scope.ts";
 
 export interface LibraryFilters {
   from?: string | null; // ISO date (inclusive)
@@ -38,6 +39,7 @@ export async function listLibrary(
   pool: pg.Pool,
   filters: LibraryFilters,
   servable: string[],
+  scope: Scope = { owner: true, workspaceId: null, partyId: null },
 ): Promise<LibraryPage> {
   const limit = Math.min(Math.max(filters.limit ?? 24, 1), 100);
   const params: unknown[] = [];
@@ -47,6 +49,7 @@ export async function listLibrary(
     return `$${params.length}`;
   };
 
+  if (!scope.owner) where.push(visibleInteractionsSql(scope, params));
   if (filters.from) where.push(`i.occurred_at >= ${p(filters.from)}::timestamptz`);
   if (filters.to) where.push(`i.occurred_at < (${p(filters.to)}::date + interval '1 day')`);
   if (filters.sources?.length) where.push(`i.source = any(${p(filters.sources)}::text[])`);
@@ -123,11 +126,13 @@ export async function listLibrary(
   return { items, nextCursor };
 }
 
-export async function pipelineStatuses(pool: pg.Pool, ids: number[]) {
+export async function pipelineStatuses(pool: pg.Pool, ids: number[], scope: Scope = { owner: true, workspaceId: null, partyId: null }) {
   if (!ids.length) return [];
+  const params: unknown[] = [ids];
+  const visible = visibleInteractionsSql(scope, params);
   const { rows } = await pool.query(
-    `select id, pipeline_status, pipeline_error, duration_sec, title from interactions where id = any($1::bigint[])`,
-    [ids],
+    `select id, pipeline_status, pipeline_error, duration_sec, title from interactions i where id = any($1::bigint[]) and ${visible}`,
+    params,
   );
   return rows.map((r) => ({
     id: r.id as number,

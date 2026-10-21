@@ -2,17 +2,31 @@ import type pg from "pg";
 import type { StorageDriver } from "../storage/types.ts";
 import type { RecordingDetail, TranscriptLine, RoleChip } from "../../shared/types.ts";
 import { pickVideoSource, type PlayableCandidate } from "./videoSource.ts";
+import { visibleInteractionsSql, type Scope } from "../auth/scope.ts";
+
+const OWNER: Scope = { owner: true, workspaceId: null, partyId: null };
+
+/** True when the scope may see this interaction (404 otherwise, never 403: do not leak existence). */
+export async function canSeeInteraction(pool: pg.Pool, id: number, scope: Scope): Promise<boolean> {
+  if (scope.owner) return true;
+  const params: unknown[] = [id];
+  const visible = visibleInteractionsSql(scope, params);
+  const { rowCount } = await pool.query(`select 1 from interactions i where i.id = $1 and ${visible}`, params);
+  return (rowCount ?? 0) > 0;
+}
 
 const PRESIGN_TTL_SEC = 6 * 3600;
 
-export async function getRecording(pool: pg.Pool, storage: StorageDriver, id: number): Promise<RecordingDetail | null> {
+export async function getRecording(pool: pg.Pool, storage: StorageDriver, id: number, scope: Scope = OWNER): Promise<RecordingDetail | null> {
+  const params: unknown[] = [id];
+  const visible = visibleInteractionsSql(scope, params);
   const { rows: irows } = await pool.query(
     `select i.*, w.name as workspace_name,
             (select count(*)::int from segments s where s.interaction_id = i.id) as segment_count
      from interactions i
      left join workspaces w on w.id = i.workspace_id
-     where i.id = $1`,
-    [id],
+     where i.id = $1 and ${visible}`,
+    params,
   );
   const i = irows[0];
   if (!i) return null;

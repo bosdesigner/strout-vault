@@ -14,6 +14,7 @@ import {
   upsertRole,
 } from "../services/people.ts";
 import { HttpError, intId, parse, wrap } from "./util.ts";
+import { requireOwner, scopeOf } from "../auth/scope.ts";
 
 const listSchema = z.object({
   q: z.string().max(100).optional(),
@@ -70,10 +71,22 @@ export function peopleRouter(ctx: AppContext): Router {
     "/",
     wrap(async (req, res) => {
       const q = parse(listSchema, req.query);
-      const items = await listParties(ctx.pool, { q: q.q, kind: q.kind, workspaceId: q.workspace, role: q.role, status: q.status, market: q.market, limit: q.limit });
-      res.json({ items });
+      const scope = scopeOf(req.session);
+      const items = await listParties(ctx.pool, {
+        q: q.q,
+        kind: q.kind,
+        workspaceId: scope.owner ? q.workspace : scope.workspaceId,
+        role: q.role,
+        status: q.status,
+        market: q.market,
+        limit: q.limit,
+      });
+      // Contractors get names for tagging, not contact details.
+      res.json({ items: scope.owner ? items : items.map((p) => ({ ...p, emails: [], location: null, orgs: [] })) });
     }),
   );
+
+  r.use(requireOwner());
 
   r.get(
     "/markets",

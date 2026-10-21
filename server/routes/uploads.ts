@@ -109,7 +109,11 @@ export function uploadsRouter(ctx: AppContext): Router {
       const input = parse(finishSchema, req.body);
       if (!acceptedExtension(input.originalFilename)) throw new HttpError(415, "Unsupported file type");
       try {
-        const out = await finishUpload(ctx.pool, ctx.storage, input, { uploadedBy: req.session?.partyId ?? null });
+        const owner = req.session?.role === "owner";
+        const out = await finishUpload(ctx.pool, ctx.storage, input, {
+          uploadedBy: req.session?.partyId ?? null,
+          forceWorkspaceId: owner ? undefined : req.session?.workspaceId ?? null,
+        });
         res.status(201).json(out);
       } catch (err) {
         if (err instanceof UploadError) {
