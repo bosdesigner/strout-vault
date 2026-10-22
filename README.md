@@ -69,21 +69,23 @@ Open the **Secrets** tab and add each of these (names must match exactly):
 psql "$DATABASE_URL" -f db/migrations/0003_access_and_calls.sql
 ```
 
-`/healthz` then reports `schema.version` starting with `v0.3`.
+`/api/health` then reports `schema.version` starting with `v0.3`.
 
 ### 4. Click Deploy
 
 Replit → **Deploy** → Autoscale. The build runs `npm run build` (esbuild for the server, Vite for the client) and the deployment runs `npm start`.
 
-### 5. Check `/healthz`
+### 5. Check `/api/health`
 
-Open `https://<your-app>/healthz`. It needs no login and should return:
+Open `https://<your-app>/api/health`. It needs no login and should return:
 
 ```json
 {"db":"ok","storage":"ok","storageDriver":"s3","schema":{"version":"v0.2 recordings: …","appliedAt":"…","entries":1}}
 ```
 
 `db` is a `select 1` against Neon, `storage` is a `HeadBucket` on R2, and `schema.version` is the latest row of `schema_log`. Anything other than `ok` returns HTTP 503 with a short reason (never a connection string or key).
+
+The same check also answers at `/healthz` for local development and other hosts. On Replit use `/api/health`: Autoscale deployments run on Google Cloud Run, whose front end reserves the exact path `/healthz` and answers it with a Google 404 page before the request reaches the app.
 
 Then sign in at `/login` with `ADMIN_EMAIL` and your password.
 
@@ -139,7 +141,7 @@ scripts/           db-local, bench-search, screenshots, hash-password, e2e-serve
 tests/             unit + API (Vitest), end-to-end (Playwright)
 ```
 
-**Hard rules the code keeps.** The app never runs DDL (no ORM migrations, no `drizzle-kit push`); it only reads, inserts and updates rows and never deletes rows or storage objects (the `StorageDriver` has no delete method). Every page and every `/api` route requires the session cookie; every state-changing request also needs the `X-CSRF-Token` header. Only `/healthz` is public. No secrets live in the repo.
+**Hard rules the code keeps.** The app never runs DDL (no ORM migrations, no `drizzle-kit push`); it only reads, inserts and updates rows and never deletes rows or storage objects (the `StorageDriver` has no delete method). Every page and every `/api` route requires the session cookie; every state-changing request also needs the `X-CSRF-Token` header. Only the health check (`/healthz`, `/api/health`) is public. No secrets live in the repo.
 
 **Uploads.** The browser hashes each file (SHA-256, in a Web Worker), asks `/api/uploads/check` whether that hash is already in `media`, then uploads straight to storage with presigned multipart URLs (Uppy AwsS3). File bytes never pass through Express with the `s3` driver. On completion `/api/uploads/finish` writes, in one transaction: the `interactions` row (`pipeline_status='queued'`), the `media` row (`role='original'`, `status='verified'`, bytes, sha256, mime type, location), `jobs` rows for `transcribe` and `extract`, and `interaction_participants`. A duplicate SHA-256 is refused with the existing recording's title. Status is refreshed every 10 seconds while anything is in progress.
 

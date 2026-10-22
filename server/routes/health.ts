@@ -3,7 +3,10 @@ import type { AppContext } from "../context.ts";
 
 export function healthRouter(ctx: AppContext): Router {
   const r = Router();
-  r.get("/healthz", async (_req, res) => {
+  // Served at two paths: /healthz for local use and most hosts, and /api/health because Google's
+  // front end (Replit Autoscale runs on Cloud Run) answers the exact path /healthz itself with a
+  // Google 404 page and never forwards it to the container.
+  r.get(["/healthz", "/api/health"], async (_req, res) => {
     const out: {
       db: "ok" | "error";
       storage: "ok" | "error";
