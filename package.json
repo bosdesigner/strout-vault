@@ -76,5 +76,8 @@
     "@types/supertest": "^6.0.2",
     "supertest": "^7.0.0",
     "vitest": "^3.0.0"
+  },
+  "overrides": {
+    "tinypool": "^2.2.0"
   }
 }
