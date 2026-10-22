@@ -17,13 +17,15 @@ describe("auth", () => {
     expect((await request(t.app).post("/api/uploads/check").send({ sha256: "a".repeat(64) })).status).toBe(401);
   });
 
-  it("/healthz is public and reports db, storage and schema version without secrets", async () => {
-    const res = await request(t.app).get("/healthz");
-    expect(res.status).toBe(200);
-    expect(res.body.db).toBe("ok");
-    expect(res.body.storage).toBe("ok");
-    expect(res.body.schema.version).toMatch(/^v0\.\d+ /);
-    expect(JSON.stringify(res.body)).not.toMatch(/postgres:\/\/|secret/i);
+  it("the health check is public at /healthz and /api/health and reports db, storage and schema version without secrets", async () => {
+    for (const path of ["/healthz", "/api/health"]) {
+      const res = await request(t.app).get(path);
+      expect(res.status, path).toBe(200);
+      expect(res.body.db, path).toBe("ok");
+      expect(res.body.storage, path).toBe("ok");
+      expect(res.body.schema.version, path).toMatch(/^v0\.\d+ /);
+      expect(JSON.stringify(res.body), path).not.toMatch(/postgres:\/\/|secret/i);
+    }
   });
 
   it("logs in with the right password and sets an httpOnly, SameSite=Lax cookie", async () => {
