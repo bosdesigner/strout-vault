@@ -17,7 +17,7 @@ Go to <https://replit.com/import/github> and import `bosdesigner/strout-vault`. 
 - workspace: `npm run dev` (API + client with hot reload, one process on `PORT`)
 - deployment: **Autoscale**, build `npm run build`, run `npm start`
 
-No `replit.nix` is needed; the `nodejs-20` module is enough.
+`replit.nix` adds ffmpeg, which only the worker (step 6) uses; the web app needs nothing beyond the `nodejs-20` module.
 
 ### 2. Add the Secrets
 
@@ -42,6 +42,8 @@ Open the **Secrets** tab and add each of these (names must match exactly):
 | `RESEND_API_KEY` | (Phase 3) Resend API key used to email contractor sign-in links. Without it links are only written to the server log. |
 | `MAIL_FROM` | (Phase 3) Sender for those emails, e.g. `Strout Vault <vault@yourdomain.com>` (a domain verified in Resend). |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | (Phase 3) Needed to verify Twilio webhook signatures and to fetch call recordings. Webhooks return 503 until both are set. |
+| `ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET` | (Phase 4, worker) The Zoom Server-to-Server OAuth app meeting-vault already uses, with its read-only scopes (`recording:read:admin`, `user:read:admin`). Without them the worker skips Zoom. |
+| `GROQ_API_KEY`, `GROQ_MONTHLY_BUDGET_USD` | (Phase 4, worker, optional) Groq Whisper for recordings that have no Zoom transcript, about $0.04 per audio hour. Nothing is sent unless **both** are set; the budget is enforced from `spend_ledger`. |
 
 `PORT` is set by Replit itself. Optional tuning variables are listed in [`.env.example`](.env.example).
 
@@ -71,6 +73,8 @@ psql "$DATABASE_URL" -f db/migrations/0003_access_and_calls.sql
 
 `/api/health` then reports `schema.version` starting with `v0.3`.
 
+**Phase 4 adds `db/migrations/0004_worker.sql`**: tables `worker_state`, `worker_runs` and `spend_ledger`, plus two bookkeeping columns on `media` (`attempts`, `last_error`). Additive, `if not exists`, safe to re-run. Apply it the same way (or paste it into the Neon SQL editor) before deploying the worker; `/api/health` then reports `v0.4`.
+
 ### 4. Click Deploy
 
 Replit → **Deploy** → Autoscale. The build runs `npm run build` (esbuild for the server, Vite for the client) and the deployment runs `npm start`.
@@ -88,6 +92,21 @@ Open `https://<your-app>/api/health`. It needs no login and should return:
 The same check also answers at `/healthz` for local development and other hosts. On Replit use `/api/health`: Autoscale deployments run on Google Cloud Run, whose front end reserves the exact path `/healthz` and answers it with a Google 404 page before the request reaches the app.
 
 Then sign in at `/login` with `ADMIN_EMAIL` and your password.
+
+### 6. Deploy the worker (hourly)
+
+The worker is what used to be `vault run` on the Mac: every hour it asks Zoom for new cloud recordings, streams each file into the archive bucket (B2) with a SHA-256 check, transcribes whatever is waiting (Zoom's own transcript first, Groq only if allowed), processes uploads and phone calls, and writes a report you can read at **Pipeline** in the account menu. It runs once and exits, so it fits a Replit **Scheduled Deployment**. Replit runs one deployment per Repl, so the worker gets a second Repl made from the same repository:
+
+1. Go to <https://replit.com/import/github> again, import `bosdesigner/strout-vault`, and name the Repl `strout-vault-worker`.
+2. In its **Secrets** tab add the same secrets as the web app (everything in step 2) plus `ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID` and `ZOOM_CLIENT_SECRET`. Leave `GROQ_API_KEY` out until you have decided on a monthly budget; the worker still uses Zoom's transcripts without it.
+3. Click **Deploy**, choose **Scheduled**, and set:
+   - Schedule: every hour (`0 * * * *`)
+   - Build command: `npm run build:worker`
+   - Run command: `npm run worker`
+   - Timeout: 55 minutes (the worker stops starting new work after `WORKER_TIME_BUDGET_SEC`, 50 minutes by default, so runs never overlap; a database lock guarantees it anyway)
+4. Run it once from the deployment page and open **Pipeline** in the web app: the run appears with what it found. The first run sweeps the last three months, matches the recordings meeting-vault already archived by Zoom UUID and downloads nothing twice.
+
+Useful from the worker Repl's shell: `npm run worker:dev -- --report` (the pipeline report as JSON), `npm run worker:dev -- --dry-run` (enumerate Zoom, download nothing), `npm run worker:dev -- --steps transcribe`.
 
 ---
 
@@ -132,16 +151,18 @@ server/            Express 5 API (TypeScript, ESM)
   services/        library listing, recording detail, search, upload transaction,
                    video-source selection rules
   routes/          thin route handlers
+  worker/          `npm run worker`: Zoom sync (zoom.ts, sync.ts), transcription
+                   (vtt.ts, groq.ts, media.ts, transcribe.ts), budgets, report, run lock
   db/schema.ts     hand-written Drizzle schema matching db/migrations exactly
 client/            React 18 + Vite + Tailwind + shadcn-style components
 shared/            types and text helpers used by both sides
-db/migrations/     0001 and 0002 copied unchanged from meeting-vault (source of truth)
+db/migrations/     0001 and 0002 copied unchanged from meeting-vault (source of truth); 0003, 0004 additive
 db/seed.sql        realistic fake data for development and tests (generated by scripts/gen-seed.ts)
 scripts/           db-local, bench-search, screenshots, hash-password, e2e-server
 tests/             unit + API (Vitest), end-to-end (Playwright)
 ```
 
-**Hard rules the code keeps.** The app never runs DDL (no ORM migrations, no `drizzle-kit push`); it only reads, inserts and updates rows and never deletes rows or storage objects (the `StorageDriver` has no delete method). Every page and every `/api` route requires the session cookie; every state-changing request also needs the `X-CSRF-Token` header. Only the health check (`/healthz`, `/api/health`) is public. No secrets live in the repo.
+**Hard rules the code keeps.** The app never runs DDL (no ORM migrations, no `drizzle-kit push`); it only reads, inserts and updates rows and never deletes rows or storage objects (the `StorageDriver` has no delete method). Every page and every `/api` route requires the session cookie; every state-changing request also needs the `X-CSRF-Token` header. Only the health check (`/healthz`, `/api/health`) is public. No secrets live in the repo. The worker follows the same rules: it only GETs from Zoom, only writes new objects to the bucket (a re-download of a mismatched file overwrites the same key), and spends nothing on paid APIs unless a key **and** a monthly budget are both set.
 
 **Uploads.** The browser hashes each file (SHA-256, in a Web Worker), asks `/api/uploads/check` whether that hash is already in `media`, then uploads straight to storage with presigned multipart URLs (Uppy AwsS3). File bytes never pass through Express with the `s3` driver. On completion `/api/uploads/finish` writes, in one transaction: the `interactions` row (`pipeline_status='queued'`), the `media` row (`role='original'`, `status='verified'`, bytes, sha256, mime type, location), `jobs` rows for `transcribe` and `extract`, and `interaction_participants`. A duplicate SHA-256 is refused with the existing recording's title. Status is refreshed every 10 seconds while anything is in progress.
 
@@ -157,8 +178,11 @@ tests/             unit + API (Vitest), end-to-end (Playwright)
 
 **Tracked numbers (Phase 3, Twilio).** Buy a number in the Twilio console (the app never buys anything), set its voice webhook to `POST <PUBLIC_URL>/webhooks/twilio/voice`, and record it under Access & numbers with the contractor it belongs to and the phone to forward to. On a call the app verifies `X-Twilio-Signature` (HMAC-SHA1 of the URL built from `PUBLIC_URL` plus the sorted form fields), writes a `calls` row (matching the caller id against `parties.phones`), and answers with TwiML: the recording notice, then `<Dial record="record-from-answer-dual">` to the contractor. When Twilio posts the finished recording, the app fetches it once (HTTP basic auth with the account SID and token), writes it to storage under `calls/<yyyy>/<mm>/<CallSid>.mp3`, and in one transaction creates the `interactions` row (`source='contractor_call'`, `pipeline_status='queued'`), the `media` row, `transcribe` + `extract` jobs and the participants (the contractor, plus the caller when matched). Repeated callbacks are no-ops; a failed fetch is recorded on the call and answered with 500 so Twilio retries.
 
+**The worker (Phase 4).** `server/worker/index.ts` runs one pass and exits. It takes a Postgres advisory lock so two runs never overlap, records a `worker_runs` row, then: (1) **Zoom sync**, ported from meeting-vault's `zoom.py`/`download.py`: a Server-to-Server OAuth token, every user's recordings month by month from the cursor minus `ZOOM_SYNC_OVERLAP_MONTHS` (3) to today, de-duplicated by meeting UUID (`interactions.source_ref`) and file id (`media.source_file_id`); each archive-worthy file (video, audio, transcript, captions, chat; never timeline/summary metadata) is streamed from Zoom into the archive bucket while being hashed, then its byte count is checked against Zoom's report (`verified`, or `verified_stable` when two downloads agree with each other but not with Zoom's number). Downloads go newest-meeting-first and small-files-first, and stop at the run's time or byte budget, leaving the rest `pending` for the next hour. (2) **Transcription** for every recording with a verified original and no transcript: Zoom's TRANSCRIPT file, then its CC file, then Groq Whisper (16 kHz mono Opus, split into 15-minute chunks, word timestamps kept), each written in one transaction (`transcripts`, `segments`, `interactions.transcript`, `pipeline_status='ready'`, the `transcribe` job). A recording whose transcription would push the month over `GROQ_MONTHLY_BUDGET_USD` stays `queued` with the reason shown on the Pipeline page. Failures are retried automatically up to three times, then wait for **Retry**. (3) **Report**: queue counts, pending downloads, recordings without an off-site copy, month-to-date spend. `GET /api/pipeline` and `/pipeline` (owner only) show the last runs and the lists; `POST /api/pipeline/retry` only updates statuses and counters.
+
 ## Phase status
 
 - [x] Phase 1 — library, recording page, search, upload ([verification](docs/phase-1-verification.md), [screenshots](docs/screenshots/phase-1/))
 - [x] Phase 2 — people, companies, projects, review queue ([verification](docs/phase-2-verification.md), [screenshots](docs/screenshots/phase-2/))
 - [x] Phase 3 — contractor access and call capture ([verification](docs/phase-3-verification.md), [screenshots](docs/screenshots/phase-3/)); migration `0003` must be applied first
+- [x] Phase 4 — the worker: Zoom sync, transcription, upload queue, Pipeline page ([verification](docs/phase-4-verification.md), [screenshots](docs/screenshots/phase-4/)); migration `0004` must be applied first, then deploy the worker (step 6 above)
