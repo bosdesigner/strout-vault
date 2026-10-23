@@ -98,12 +98,8 @@ Then sign in at `/login` with `ADMIN_EMAIL` and your password.
 The worker is what used to be `vault run` on the Mac: every hour it asks Zoom for new cloud recordings, streams each file into the archive bucket (B2) with a SHA-256 check, transcribes whatever is waiting (Zoom's own transcript first, Groq only if allowed), processes uploads and phone calls, and writes a report you can read at **Pipeline** in the account menu. It runs once and exits, so it fits a Replit **Scheduled Deployment**. Replit runs one deployment per Repl, so the worker gets a second Repl made from the same repository:
 
 1. Go to <https://replit.com/import/github> again, import `bosdesigner/strout-vault`, and name the Repl `strout-vault-worker`.
-2. In its **Secrets** tab add the same secrets as the web app (everything in step 2) plus `ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID` and `ZOOM_CLIENT_SECRET`. Leave `GROQ_API_KEY` out until you have decided on a monthly budget; the worker still uses Zoom's transcripts without it.
-3. Click **Deploy**, choose **Scheduled**, and set:
-   - Schedule: every hour (`0 * * * *`)
-   - Build command: `npm run build:worker`
-   - Run command: `npm run worker`
-   - Timeout: 55 minutes (the worker stops starting new work after `WORKER_TIME_BUDGET_SEC`, 50 minutes by default, so runs never overlap; a database lock guarantees it anyway)
+2. In its **Secrets** tab add the same secrets as the web app (everything in step 2, the Secrets panel's **Edit as .env** button copies them all at once) plus `WORKER_MODE=1`, `ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID` and `ZOOM_CLIENT_SECRET`. Leave `GROQ_API_KEY` out until you have decided on a monthly budget; the worker still uses Zoom's transcripts without it. The B2 application key must have **Read and Write** access to the archive bucket: the website only reads, but the worker writes new originals there (B2 answers "not entitled" otherwise).
+3. Click **Publish**, choose **Scheduled** as the deployment type, and set the cron expression to `0 * * * *` (every hour) and the job timeout to 55 minutes. The build and run commands stay as the repo's `.replit` has them (`npm run build`, `npm start`): with `WORKER_MODE=1`, `npm start` runs the worker once and exits. The worker stops starting new work after `WORKER_TIME_BUDGET_SEC` (50 minutes) so runs never overlap, and a database lock guarantees it anyway.
 4. Run it once from the deployment page and open **Pipeline** in the web app: the run appears with what it found. The first run sweeps the last three months, matches the recordings meeting-vault already archived by Zoom UUID and downloads nothing twice.
 
 Useful from the worker Repl's shell: `npm run worker:dev -- --report` (the pipeline report as JSON), `npm run worker:dev -- --dry-run` (enumerate Zoom, download nothing), `npm run worker:dev -- --steps transcribe`.

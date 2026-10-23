@@ -24,6 +24,33 @@ export interface RunSummary {
   skipped?: string;
   durationSec: number;
   errors: string[];
+  /** What this worker was configured with, so the web app can show the worker's settings rather than its own. */
+  config?: WorkerConfigSnapshot;
+}
+
+export interface WorkerConfigSnapshot {
+  zoomConfigured: boolean;
+  groqConfigured: boolean;
+  groqBudgetUsd: number;
+  groqModel: string;
+  transcribePrefer: string;
+  archiveStorage: string;
+  archiveBucket: string | null;
+  overlapMonths: number;
+}
+
+export function configSnapshot(ctx: WorkerContext): WorkerConfigSnapshot {
+  const c = ctx.config;
+  return {
+    zoomConfigured: !!(c.ZOOM_ACCOUNT_ID && c.ZOOM_CLIENT_ID && c.ZOOM_CLIENT_SECRET),
+    groqConfigured: !!c.GROQ_API_KEY,
+    groqBudgetUsd: c.GROQ_API_KEY ? c.GROQ_MONTHLY_BUDGET_USD : 0,
+    groqModel: c.GROQ_MODEL,
+    transcribePrefer: c.TRANSCRIBE_PREFER,
+    archiveStorage: ctx.storage.archiveTarget.storage,
+    archiveBucket: ctx.storage.archiveTarget.bucket,
+    overlapMonths: c.ZOOM_SYNC_OVERLAP_MONTHS,
+  };
 }
 
 export interface RunResult {
@@ -37,7 +64,7 @@ const LOCK_NAME = "strout-vault-worker";
 export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Promise<RunResult> {
   const steps = opts.steps ?? ["zoom", "transcribe", "report"];
   const startedAt = ctx.now();
-  const summary: RunSummary = { durationSec: 0, errors: [] };
+  const summary: RunSummary = { durationSec: 0, errors: [], config: configSnapshot(ctx) };
 
   // One run at a time, across machines: a session-level advisory lock.
   const lockClient = await ctx.pool.connect();
@@ -115,6 +142,12 @@ export function formatRunSummary(s: RunSummary): string {
     lines.push(
       `queue: ${r.queue.queued} queued, ${r.queue.transcribing} transcribing, ${r.queue.failed} failed, ${r.queue.ready} ready; ${r.downloads.pending + r.downloads.failed} download(s) pending; ${r.missingOffsite.total} recording(s) without an off-site copy; groq this month $${r.spend.groqUsd.toFixed(2)}`,
     );
+  }
+  // Per-item errors from each step, a few of them: the full lists live in the run's summary JSON.
+  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.transcribe?.errors ?? [])];
+  if (itemErrors.length) {
+    const shown = itemErrors.slice(0, 3);
+    lines.push(`errors: ${shown.join(" | ")}${itemErrors.length > shown.length ? ` | …and ${itemErrors.length - shown.length} more` : ""}`);
   }
   if (s.errors.length) lines.push(`errors: ${s.errors.join(" | ")}`);
   return lines.join("\n");
