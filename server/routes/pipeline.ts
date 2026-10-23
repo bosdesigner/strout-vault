@@ -18,13 +18,13 @@ export function pipelineRouter(ctx: AppContext): Router {
         ctx.pool.query(`select id, started_at, finished_at, ok, trigger, host, summary, error from worker_runs order by started_at desc limit 8`),
         ctx.pool.query(
           `select id, title, occurred_at, source, pipeline_error, pipeline_updated_at from interactions
-            where source is not null and pipeline_status = 'failed' order by pipeline_updated_at desc nulls last limit 50`,
+            where pipeline_status = 'failed' order by pipeline_updated_at desc nulls last limit 50`,
         ),
         ctx.pool.query(
           `select i.id, i.title, i.occurred_at, i.source, i.pipeline_status, i.pipeline_error, i.pipeline_updated_at,
                   (select count(*)::int from media m where m.interaction_id = i.id and m.status in ('pending','failed') and m.source = 'zoom') as pending_files
              from interactions i
-            where i.source is not null and i.pipeline_status in ('queued', 'transcribing')
+            where i.pipeline_status in ('queued', 'transcribing')
             order by i.occurred_at desc nulls last limit 50`,
         ),
         ctx.pool.query(`select key, value, updated_at from worker_state where key in ('zoom_cursor_month', 'last_run')`),
@@ -88,7 +88,7 @@ export function pipelineRouter(ctx: AppContext): Router {
     "/retry",
     wrap(async (req, res) => {
       const body = parse(z.object({ interactionId: z.coerce.number().int().positive() }), req.body);
-      const found = await ctx.pool.query(`select id, pipeline_status from interactions where id = $1 and source is not null`, [body.interactionId]);
+      const found = await ctx.pool.query(`select id, pipeline_status from interactions where id = $1`, [body.interactionId]);
       if (!found.rows[0]) throw new HttpError(404, "recording not found");
       await ctx.pool.query(`update interactions set pipeline_status = 'queued', pipeline_error = null, pipeline_updated_at = now() where id = $1`, [body.interactionId]);
       await ctx.pool.query(

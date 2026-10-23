@@ -78,8 +78,7 @@ export async function processTranscriptions(ctx: WorkerContext): Promise<Transcr
   const { rows } = await ctx.pool.query<Candidate>(
     `select i.id, i.title, i.source, i.duration_sec
        from interactions i
-      where i.source is not null
-        and not exists (select 1 from transcripts t where t.interaction_id = i.id)
+      where not exists (select 1 from transcripts t where t.interaction_id = i.id)
         and not exists (select 1 from segments s where s.interaction_id = i.id)
         and exists (select 1 from media m where m.interaction_id = i.id and m.role = 'original'
                       and m.status in ('verified', 'verified_stable') and m.kind in ('video', 'audio', 'transcript_vtt', 'caption_vtt'))

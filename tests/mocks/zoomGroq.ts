@@ -127,14 +127,14 @@ export function createMockServices(initial: MockRecording[], opts: { pageSize?: 
         return new Response(null, { status: 302, headers: { location: `https://cdn.test/blob/${id}` } });
       }
       calls.downloads++;
-      return new Response(hit.file.body, { status: 200, headers: { "content-length": String(hit.file.body.length), "content-type": "application/octet-stream" } });
+      return new Response(new Uint8Array(hit.file.body), { status: 200, headers: { "content-length": String(hit.file.body.length), "content-type": "application/octet-stream" } });
     }
     if (url.host === "cdn.test" && url.pathname.startsWith("/blob/")) {
       if (auth) calls.cdnAuthHeaders++;
       const hit = findFile(url.pathname.slice("/blob/".length));
       if (!hit) return new Response("not found", { status: 404 });
       calls.downloads++;
-      return new Response(hit.file.body, { status: 200, headers: { "content-length": String(hit.file.body.length) } });
+      return new Response(new Uint8Array(hit.file.body), { status: 200, headers: { "content-length": String(hit.file.body.length) } });
     }
     // ---- Groq ----
     if (url.host === "groq.test" && method === "POST") {

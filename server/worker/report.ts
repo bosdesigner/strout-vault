@@ -14,7 +14,7 @@ export interface PipelineReport {
 export async function buildReport(pool: pg.Pool, now: Date): Promise<PipelineReport> {
   const [queue, downloads, missing, missingCount, groq] = await Promise.all([
     pool.query(
-      `select coalesce(pipeline_status, 'ready') as s, count(*)::int as n from interactions where source is not null group by 1`,
+      `select coalesce(pipeline_status, 'ready') as s, count(*)::int as n from interactions group by 1`,
     ),
     pool.query(`select status, count(*)::int as n from media where source = 'zoom' and role = 'original' and status in ('pending', 'failed') group by 1`),
     pool.query(
