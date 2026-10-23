@@ -24,6 +24,7 @@ import { HttpError } from "./routes/util.ts";
 import { requireOwner } from "./auth/scope.ts";
 import { membershipsRouter, trackedNumbersRouter, callsRouter } from "./routes/access.ts";
 import { twilioWebhooksRouter } from "./routes/twilioWebhooks.ts";
+import { pipelineRouter } from "./routes/pipeline.ts";
 import type { Mailer } from "./mail/types.ts";
 import { MemoryMailer } from "./mail/memory.ts";
 
@@ -102,6 +103,7 @@ export async function createApp(opts: CreateAppOptions): Promise<{ app: Express;
   api.use("/memberships", requireOwner(), membershipsRouter(ctx));
   api.use("/tracked-numbers", requireOwner(), trackedNumbersRouter(ctx));
   api.use("/calls", requireOwner(), callsRouter(ctx));
+  api.use("/pipeline", requireOwner(), pipelineRouter(ctx));
   api.use((_req, res) => {
     res.status(404).json({ error: "not_found" });
   });
