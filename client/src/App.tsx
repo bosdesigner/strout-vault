@@ -14,6 +14,7 @@ import ProjectsPage from "@/pages/ProjectsPage";
 import ProjectPage from "@/pages/ProjectPage";
 import ReviewPage from "@/pages/ReviewPage";
 import AccessPage from "@/pages/AccessPage";
+import PipelinePage from "@/pages/PipelinePage";
 import { WorkspaceProvider } from "@/lib/workspace";
 import { MobileNav } from "@/components/MobileNav";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -66,6 +67,7 @@ export default function App() {
         <Route path="/projects/:id" element={<ProjectPage />} />
         <Route path="/review" element={<ReviewPage />} />
         <Route path="/access" element={<AccessPage />} />
+        <Route path="/pipeline" element={<PipelinePage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

@@ -37,6 +37,38 @@ const envSchema = z.object({
   TWILIO_AUTH_TOKEN: z.string().optional(),
   // Test-only hook: exposes the last sent email at /api/_test/last-mail (never in production).
   EXPOSE_TEST_MAIL: z.enum(["0", "1"]).default("0"),
+
+  // ---- The worker (Phase 4): `npm run worker`, an hourly Scheduled Deployment on Replit. ----
+  // Zoom Server-to-Server OAuth app with read-only scopes. Without these the Zoom step is skipped.
+  ZOOM_ACCOUNT_ID: z.string().optional(),
+  ZOOM_CLIENT_ID: z.string().optional(),
+  ZOOM_CLIENT_SECRET: z.string().optional(),
+  ZOOM_API_BASE: z.string().default("https://api.zoom.us/v2"),
+  ZOOM_OAUTH_BASE: z.string().default("https://zoom.us"),
+  // First month to sweep when there is no cursor yet (YYYY-MM). Default: ZOOM_SYNC_OVERLAP_MONTHS back from today.
+  ZOOM_SYNC_FROM: z.string().regex(/^\d{4}-\d{2}$/, "YYYY-MM").optional(),
+  // Months re-checked behind the cursor every run: Zoom finishes processing recordings hours or days late.
+  ZOOM_SYNC_OVERLAP_MONTHS: z.coerce.number().int().min(0).max(24).default(3),
+  // Where originals the worker fetches are archived. Default: b2 when configured, else the upload target.
+  ARCHIVE_STORAGE: z.enum(["b2", "r2", "local"]).optional(),
+  // Groq speech-to-text for recordings without a Zoom transcript. Costs money: nothing is sent unless
+  // GROQ_API_KEY is set AND the month's spend stays under GROQ_MONTHLY_BUDGET_USD (default 0 = off).
+  GROQ_API_KEY: z.string().optional(),
+  GROQ_MODEL: z.string().default("whisper-large-v3-turbo"),
+  GROQ_URL: z.string().optional(),
+  GROQ_MONTHLY_BUDGET_USD: z.coerce.number().min(0).default(0),
+  GROQ_MAX_UPLOAD_MB: z.coerce.number().positive().default(24),
+  GROQ_CHUNK_SECONDS: z.coerce.number().int().positive().default(900),
+  GROQ_AUDIO_KBPS: z.coerce.number().int().positive().default(24),
+  // zoom: use Zoom's own VTT (transcript, then captions) when present, Groq otherwise. groq: always Groq.
+  TRANSCRIBE_PREFER: z.enum(["zoom", "groq"]).default("zoom"),
+  FFMPEG_BIN: z.string().default("ffmpeg"),
+  FFPROBE_BIN: z.string().default("ffprobe"),
+  // One run stops starting new work after this many seconds so hourly runs never overlap.
+  WORKER_TIME_BUDGET_SEC: z.coerce.number().int().positive().default(50 * 60),
+  // Bytes one run may download from Zoom before it stops and leaves the rest for the next run.
+  WORKER_MAX_BYTES_PER_RUN: z.coerce.number().positive().default(20 * 1024 * 1024 * 1024),
+  WORKER_TMP_DIR: z.string().optional(),
 });
 
 export type Config = z.infer<typeof envSchema> & {

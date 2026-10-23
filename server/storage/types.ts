@@ -30,6 +30,24 @@ export interface StorageDriver {
   readonly name: "s3" | "local";
   /** Where new uploads land; written to media.storage / media.bucket. */
   readonly uploadTarget: { storage: "r2" | "local"; bucket: string | null };
+  /** Where the worker archives originals it fetches itself (Zoom): B2 when configured, else the upload target. */
+  readonly archiveTarget: { storage: "b2" | "r2" | "local"; bucket: string | null };
+
+  /**
+   * Server-side streaming write (the worker archiving a Zoom file it is downloading).
+   * Hashes the bytes as they pass so the caller gets a SHA-256 without a second read.
+   * `storage` defaults to the archive target.
+   */
+  putStream(input: {
+    storage?: string;
+    bucket?: string | null;
+    key: string;
+    body: NodeJS.ReadableStream;
+    contentType?: string | null;
+    contentLength?: number | null;
+  }): Promise<{ bytes: number; sha256: string }>;
+  /** Server-side read (the worker fetching audio to transcribe). Null when this driver cannot reach the location. */
+  getObjectStream(location: ObjectLocation): Promise<{ stream: NodeJS.ReadableStream; bytes: number | null } | null>;
   /**
    * Whether a media row (storage value, and optionally its key) can be played from the web
    * through this driver. The local driver only serves relative keys under its root: production

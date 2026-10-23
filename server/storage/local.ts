@@ -146,6 +146,52 @@ export class LocalStorageDriver implements StorageDriver {
     return { bytes: input.body.length };
   }
 
+  readonly archiveTarget = { storage: "local" as const, bucket: null };
+
+  /** Streams to `<key>.part` and renames on completion, so an interrupted write never looks finished. */
+  async putStream(input: { storage?: string; key: string; body: NodeJS.ReadableStream; contentType?: string | null }): Promise<{ bytes: number; sha256: string }> {
+    if (input.storage && input.storage !== "local") throw new Error(`local driver cannot write to storage ${input.storage}`);
+    const dest = this.pathFor(input.key);
+    await fsp.mkdir(path.dirname(dest), { recursive: true });
+    const part = `${dest}.part`;
+    const hash = crypto.createHash("sha256");
+    let bytes = 0;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const out = fs.createWriteStream(part);
+        input.body.on("data", (chunk: Buffer) => {
+          hash.update(chunk);
+          bytes += chunk.length;
+        });
+        input.body.on("error", (err) => {
+          out.destroy();
+          reject(err);
+        });
+        out.on("error", reject);
+        out.on("finish", () => resolve());
+        input.body.pipe(out);
+      });
+      await fsp.rename(part, dest);
+    } catch (err) {
+      await fsp.rm(part, { force: true });
+      throw err;
+    }
+    return { bytes, sha256: hash.digest("hex") };
+  }
+
+  async getObjectStream(location: ObjectLocation): Promise<{ stream: NodeJS.ReadableStream; bytes: number | null } | null> {
+    if (!this.canServe(location.storage, location.key)) return null;
+    const file = this.pathFor(location.key);
+    try {
+      const st = await fsp.stat(file);
+      if (!st.isFile()) return null;
+      return { stream: fs.createReadStream(file), bytes: st.size };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw err;
+    }
+  }
+
   async presignGet(location: ObjectLocation, opts: { expiresInSec?: number } = {}): Promise<PresignedUrl | null> {
     if (!this.canServe(location.storage, location.key)) return null;
     return this.signedUrl("/api/storage/local/object", { key: location.key }, opts.expiresInSec ?? 6 * 3600);

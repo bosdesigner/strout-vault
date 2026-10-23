@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { KeyRound, LogOut, Moon, Search, Sun, Upload, Vault } from "lucide-react";
+import { KeyRound, LogOut, Moon, Search, Sun, Upload, Vault, Activity } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -127,6 +127,11 @@ export function TopBar({ user }: { user: { email: string; role: string; displayN
               {owner && (
                 <DropdownMenuItem onSelect={() => navigate("/access")}>
                   <KeyRound /> Access & numbers
+                </DropdownMenuItem>
+              )}
+              {owner && (
+                <DropdownMenuItem onSelect={() => navigate("/pipeline")}>
+                  <Activity /> Pipeline
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem onSelect={toggle} className="sm:hidden">
