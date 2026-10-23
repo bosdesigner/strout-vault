@@ -183,14 +183,23 @@ async function downloadAndVerify(ctx: WorkerContext, client: ZoomClient, file: P
   let result: { status: "verified" | "verified_stable" | "failed"; bytes: number } = { status: "failed", bytes: 0 };
   for (let attempt = 1; attempt <= 2; attempt++) {
     const dl = await client.openDownload(url);
-    const { bytes, sha256 } = await ctx.storage.putStream({
-      storage: file.storage,
-      bucket: file.bucket,
-      key: file.storage_key,
-      body: dl.stream,
-      contentType: file.mime_type,
-      contentLength: dl.contentLength ?? (expected || null),
-    });
+    let bytes: number;
+    let sha256: string;
+    try {
+      ({ bytes, sha256 } = await ctx.storage.putStream({
+        storage: file.storage,
+        bucket: file.bucket,
+        key: file.storage_key,
+        body: dl.stream,
+        contentType: file.mime_type,
+        contentLength: dl.contentLength ?? (expected || null),
+      }));
+    } catch (err) {
+      // Say which side failed: Zoom errors already read "HTTP 4xx downloading …".
+      const e = err as Error & { name?: string; $metadata?: { httpStatusCode?: number } };
+      const status = e.$metadata?.httpStatusCode ? ` HTTP ${e.$metadata.httpStatusCode}` : "";
+      throw new Error(`storage ${file.storage}${file.bucket ? ` (${file.bucket})` : ""} refused the write:${status} ${e.name && e.name !== "Error" ? `${e.name}: ` : ""}${e.message}`.trim());
+    }
     if (!expected || bytes === expected) {
       await markFile(ctx, file.id, { status: "verified", bytes, sha256 });
       ctx.log(`zoom:   verified ${file.kind} ${fmtBytes(bytes)} (${file.title ?? file.interaction_id})`);
