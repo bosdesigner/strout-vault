@@ -141,7 +141,7 @@ async function runPhase4(browser: Browser) {
       await login(page);
       await page.goto(`${BASE}/pipeline`);
       await page.getByTestId("queue-counts").waitFor();
-      await page.getByTestId("waiting-item").first().waitFor();
+      await page.getByTestId("run").first().waitFor();
       await settle(page);
       await shoot(page, `pipeline${dark ? "-dark" : ""}`, size, { fullPage: true });
       await ctx.close();

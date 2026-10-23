@@ -73,6 +73,8 @@ psql "$DATABASE_URL" -f db/migrations/0003_access_and_calls.sql
 
 `/api/health` then reports `schema.version` starting with `v0.3`.
 
+**Phase 4 adds `db/migrations/0004_worker.sql`**: tables `worker_state`, `worker_runs` and `spend_ledger`, plus two bookkeeping columns on `media` (`attempts`, `last_error`). Additive, `if not exists`, safe to re-run. Apply it the same way (or paste it into the Neon SQL editor) before deploying the worker; `/api/health` then reports `v0.4`.
+
 ### 4. Click Deploy
 
 Replit → **Deploy** → Autoscale. The build runs `npm run build` (esbuild for the server, Vite for the client) and the deployment runs `npm start`.
@@ -160,7 +162,7 @@ scripts/           db-local, bench-search, screenshots, hash-password, e2e-serve
 tests/             unit + API (Vitest), end-to-end (Playwright)
 ```
 
-**Hard rules the code keeps.** The app never runs DDL (no ORM migrations, no `drizzle-kit push`); it only reads, inserts and updates rows and never deletes rows or storage objects (the `StorageDriver` has no delete method). Every page and every `/api` route requires the session cookie; every state-changing request also needs the `X-CSRF-Token` header. Only the health check (`/healthz`, `/api/health`) is public. No secrets live in the repo.
+**Hard rules the code keeps.** The app never runs DDL (no ORM migrations, no `drizzle-kit push`); it only reads, inserts and updates rows and never deletes rows or storage objects (the `StorageDriver` has no delete method). Every page and every `/api` route requires the session cookie; every state-changing request also needs the `X-CSRF-Token` header. Only the health check (`/healthz`, `/api/health`) is public. No secrets live in the repo. The worker follows the same rules: it only GETs from Zoom, only writes new objects to the bucket (a re-download of a mismatched file overwrites the same key), and spends nothing on paid APIs unless a key **and** a monthly budget are both set.
 
 **Uploads.** The browser hashes each file (SHA-256, in a Web Worker), asks `/api/uploads/check` whether that hash is already in `media`, then uploads straight to storage with presigned multipart URLs (Uppy AwsS3). File bytes never pass through Express with the `s3` driver. On completion `/api/uploads/finish` writes, in one transaction: the `interactions` row (`pipeline_status='queued'`), the `media` row (`role='original'`, `status='verified'`, bytes, sha256, mime type, location), `jobs` rows for `transcribe` and `extract`, and `interaction_participants`. A duplicate SHA-256 is refused with the existing recording's title. Status is refreshed every 10 seconds while anything is in progress.
 
