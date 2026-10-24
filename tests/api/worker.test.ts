@@ -316,7 +316,10 @@ describe("pipeline API", () => {
     const body = res.body;
     expect(body.lastRuns.length).toBeGreaterThanOrEqual(3);
     expect(body.lastRuns[0]).toMatchObject({ trigger: "test" });
-    expect(body.config).toMatchObject({ zoomConfigured: false, groqConfigured: false, archiveStorage: "local" });
+    // The settings shown are the worker's (from its last run), not the web app's: this app has no Zoom or Groq secrets.
+    expect(body.configSource).toBe("worker");
+    expect(body.config).toMatchObject({ zoomConfigured: true, groqConfigured: true, archiveStorage: "local", transcribePrefer: "zoom" });
+    expect(body.config.groqBudgetUsd).toBeGreaterThan(0);
     expect(body.state.zoomCursor).toBe(new Date().toISOString().slice(0, 7));
     expect(body.report.queue.ready).toBeGreaterThan(0);
     const waitingTitles = (body.waiting as Array<{ title: string; pendingFiles: number }>).map((w) => w.title);

@@ -31,6 +31,9 @@ export function pipelineRouter(ctx: AppContext): Router {
       ]);
       const c = ctx.config;
       const stateMap = Object.fromEntries((state.rows as Array<{ key: string; value: unknown }>).map((s) => [s.key, s.value]));
+      // The worker runs elsewhere with its own secrets; prefer the settings it reported on its last real run.
+      const lastReal = (runs.rows as Array<{ summary: RunSummary | null }>).find((row) => row.summary && !row.summary.skipped && row.summary.config);
+      const workerConfig = lastReal?.summary?.config ?? null;
       res.json({
         report,
         lastRuns: (runs.rows as Array<Record<string, unknown>>).map((row) => {
@@ -65,7 +68,7 @@ export function pipelineRouter(ctx: AppContext): Router {
           pendingFiles: row.pending_files,
           updatedAt: row.pipeline_updated_at ? new Date(row.pipeline_updated_at as string).toISOString() : null,
         })),
-        config: {
+        config: workerConfig ?? {
           zoomConfigured: !!(c.ZOOM_ACCOUNT_ID && c.ZOOM_CLIENT_ID && c.ZOOM_CLIENT_SECRET),
           groqConfigured: !!c.GROQ_API_KEY,
           groqBudgetUsd: c.GROQ_API_KEY ? c.GROQ_MONTHLY_BUDGET_USD : 0,
@@ -75,6 +78,7 @@ export function pipelineRouter(ctx: AppContext): Router {
           archiveBucket: ctx.storage.archiveTarget.bucket,
           overlapMonths: c.ZOOM_SYNC_OVERLAP_MONTHS,
         },
+        configSource: workerConfig ? "worker" : "web",
         state: {
           zoomCursor: (stateMap.zoom_cursor_month as { month?: string } | undefined)?.month ?? null,
           lastRun: stateMap.last_run ?? null,
