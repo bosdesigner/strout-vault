@@ -22,7 +22,9 @@ export function pipelineRouter(ctx: AppContext): Router {
         ),
         ctx.pool.query(
           `select i.id, i.title, i.occurred_at, i.source, i.pipeline_status, i.pipeline_error, i.pipeline_updated_at,
-                  (select count(*)::int from media m where m.interaction_id = i.id and m.status in ('pending','failed') and m.source = 'zoom') as pending_files
+                  (select count(*)::int from media m where m.interaction_id = i.id and m.status in ('pending','failed') and m.source = 'zoom') as pending_files,
+                  (select count(*)::int from media m where m.interaction_id = i.id and m.status = 'failed' and m.source = 'zoom') as failed_files,
+                  (select m.last_error from media m where m.interaction_id = i.id and m.status = 'failed' and m.source = 'zoom' order by m.id limit 1) as file_error
              from interactions i
             where i.pipeline_status in ('queued', 'transcribing')
             order by i.occurred_at desc nulls last limit 50`,
@@ -66,6 +68,8 @@ export function pipelineRouter(ctx: AppContext): Router {
           status: row.pipeline_status,
           note: row.pipeline_error,
           pendingFiles: row.pending_files,
+          failedFiles: row.failed_files,
+          fileError: row.file_error,
           updatedAt: row.pipeline_updated_at ? new Date(row.pipeline_updated_at as string).toISOString() : null,
         })),
         config: workerConfig ?? {
