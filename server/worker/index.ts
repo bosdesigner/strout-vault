@@ -15,7 +15,7 @@ import { createDb } from "../db/client.ts";
 import { createStorage } from "../storage/index.ts";
 import type { WorkerContext } from "./context.ts";
 import { buildReport } from "./report.ts";
-import { formatRunSummary, runWorker, type Step } from "./run.ts";
+import { ALL_STEPS, formatRunSummary, runWorker, type Step } from "./run.ts";
 import { toolsAvailable } from "./media.ts";
 
 function parseArgs(argv: string[]) {
@@ -32,7 +32,7 @@ function parseArgs(argv: string[]) {
       out.steps = String(argv[++i] ?? "")
         .split(",")
         .map((s) => s.trim())
-        .filter((s): s is Step => s === "zoom" || s === "transcribe" || s === "report");
+        .filter((s): s is Step => (ALL_STEPS as string[]).includes(s));
     } else if (a === "--once") {
       /* default */
     } else {

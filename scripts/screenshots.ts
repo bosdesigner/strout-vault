@@ -149,10 +149,39 @@ async function runPhase4(browser: Browser) {
   }
 }
 
+async function runPhase5(browser: Browser) {
+  for (const size of SIZES) {
+    for (const dark of [false, true]) {
+      if (dark && size.mobile) continue;
+      const ctx = await browser.newContext({
+        viewport: { width: size.width, height: size.height },
+        deviceScaleFactor: size.mobile ? 2 : 1,
+        isMobile: size.mobile,
+        hasTouch: size.mobile,
+        colorScheme: dark ? "dark" : "light",
+      });
+      const page = await ctx.newPage();
+      await login(page);
+      await page.goto(`${BASE}/clips`);
+      await page.getByTestId("clip-item").first().waitFor();
+      await settle(page);
+      await shoot(page, `clips${dark ? "-dark" : ""}`, size);
+      if (!dark) {
+        await page.getByTestId("clips-tab-approved").click();
+        await page.getByTestId("clip-item").first().waitFor();
+        await settle(page);
+        await shoot(page, "clips-approved", size);
+      }
+      await ctx.close();
+    }
+  }
+}
+
 async function run(browser: Browser) {
   if (PHASE === "phase-2") return runPhase2(browser);
   if (PHASE === "phase-3") return runPhase3(browser);
   if (PHASE === "phase-4") return runPhase4(browser);
+  if (PHASE === "phase-5") return runPhase5(browser);
   // Find a playable recording and a search hit to link to.
   const ctx0 = await browser.newContext();
   const p0 = await ctx0.newPage();

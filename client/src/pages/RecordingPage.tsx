@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Building2, Check, Clock, Film, FolderOpen, ListOrdered, Scissors, ThumbsDown, ThumbsUp, User, Users } from "lucide-react";
+import { AlertTriangle, Building2, Check, Clock, Download, Film, FolderOpen, ListOrdered, Scissors, ThumbsDown, ThumbsUp, User, Users } from "lucide-react";
 import { api } from "@/lib/api";
 import type { ClipCandidateItem, RecordingDetail, TranscriptLine } from "@shared/types";
 import { formatBytes, formatDate, formatDuration, formatTimestamp, isReady, SOURCE_LABEL, statusLabel } from "@/lib/format";
@@ -342,6 +342,19 @@ export default function RecordingPage() {
                             {c.status === "new" ? `score ${c.score}` : c.status}
                           </Badge>
                         </div>
+                        {c.clipMediaId ? (
+
+                          <div className="mt-2">
+
+                            <Button size="sm" variant="outline" onClick={() => api<{ url: string }>(`/clips/${c.id}/download`).then((d) => window.open(d.url, "_blank", "noopener"))} data-testid="download-clip">
+
+                              <Download /> Download clip
+
+                            </Button>
+
+                          </div>
+
+                        ) : null}
                         {owner && c.status !== "cut" && (
                           <div className="mt-2 flex gap-2">
                             <Button size="sm" variant={c.status === "approved" ? "secondary" : "outline"} disabled={c.status === "approved" || clipStatus.isPending} onClick={() => clipStatus.mutate({ clipId: c.id, status: "approved" })} data-testid="approve-clip">

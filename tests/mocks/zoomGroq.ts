@@ -28,11 +28,16 @@ export interface MockRecording {
 
 export interface MockServices {
   fetchImpl: typeof fetch;
-  calls: { token: number; users: number; recordings: number; downloads: number; groq: number; cdnAuthHeaders: number };
+  calls: { token: number; users: number; recordings: number; downloads: number; groq: number; anthropic: number; cdnAuthHeaders: number };
   groqRequests: Array<{ model: string | null; filename: string | null; hasAuth: boolean }>;
+  anthropicRequests: Array<{ model: string; effort: string | null; hasFormat: boolean; betas: string | null; cachedSystem: boolean; chars: number; maxTokens: number }>;
   /** Replace the recording list between runs. */
   setRecordings(recs: MockRecording[]): void;
+  /** How the mock Claude answers: "ok" (one real candidate per chunk plus one with impossible timestamps), or "refusal". */
+  setAnthropicMode(mode: "ok" | "refusal"): void;
 }
+
+export const ANTHROPIC_TEST_KEY = "anthropic-test-key";
 
 const EXT: Record<MockFile["type"], string> = { MP4: "MP4", M4A: "M4A", TRANSCRIPT: "VTT", CC: "VTT", CHAT: "TXT", TIMELINE: "JSON" };
 const TOKEN = "mock-zoom-token";
@@ -40,8 +45,10 @@ const TOKEN = "mock-zoom-token";
 export function createMockServices(initial: MockRecording[], opts: { pageSize?: number; groqPayload?: (filename: string | null) => Record<string, unknown> } = {}): MockServices {
   let recordings = initial;
   const pageSize = opts.pageSize ?? 2;
-  const calls = { token: 0, users: 0, recordings: 0, downloads: 0, groq: 0, cdnAuthHeaders: 0 };
+  const calls = { token: 0, users: 0, recordings: 0, downloads: 0, groq: 0, anthropic: 0, cdnAuthHeaders: 0 };
   const groqRequests: MockServices["groqRequests"] = [];
+  const anthropicRequests: MockServices["anthropicRequests"] = [];
+  let anthropicMode: "ok" | "refusal" = "ok";
   const rateLimited = new Set<string>();
 
   const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
@@ -136,6 +143,47 @@ export function createMockServices(initial: MockRecording[], opts: { pageSize?: 
       calls.downloads++;
       return new Response(new Uint8Array(hit.file.body), { status: 200, headers: { "content-length": String(hit.file.body.length) } });
     }
+    // ---- Anthropic (the scout) ----
+    if (url.host === "anthropic.test" && url.pathname === "/v1/messages" && method === "POST") {
+      calls.anthropic++;
+      // The SDK sends the key as x-api-key or as a bearer token depending on version and environment.
+      if (headers.get("x-api-key") !== ANTHROPIC_TEST_KEY && auth !== `Bearer ${ANTHROPIC_TEST_KEY}`) {
+        return json({ type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }, 401);
+      }
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        model: string;
+        max_tokens: number;
+        system?: Array<{ text: string; cache_control?: unknown }> | string;
+        messages: Array<{ role: string; content: string }>;
+        output_config?: { effort?: string; format?: unknown };
+      };
+      const text = String(body.messages?.[0]?.content ?? "");
+      anthropicRequests.push({
+        model: body.model,
+        effort: body.output_config?.effort ?? null,
+        hasFormat: !!body.output_config?.format,
+        betas: headers.get("anthropic-beta"),
+        cachedSystem: Array.isArray(body.system) && !!body.system[0]?.cache_control,
+        chars: text.length,
+        maxTokens: body.max_tokens,
+      });
+      const usage = { input_tokens: Math.max(1, Math.round(text.length / 4)), output_tokens: 120, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+      if (anthropicMode === "refusal") {
+        return json({ id: "msg_mock_refusal", type: "message", role: "assistant", model: body.model, content: [], stop_reason: "refusal", stop_sequence: null, stop_details: { type: "refusal", category: "general_harms", explanation: "mock" }, usage });
+      }
+      // One plausible candidate inside the chunk, plus one with invented timestamps the guardrail must drop.
+      const stamps = [...text.matchAll(/^\[(\d{2}):(\d{2}):(\d{2})\] (.*)$/gm)].map((m) => ({ sec: Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]), line: m[4] }));
+      const first = stamps[0]?.sec ?? 0;
+      const last = stamps[stamps.length - 1]?.sec ?? first + 60;
+      const start = first + 5;
+      const end = Math.min(start + 30, Math.max(start + 8, last + 10));
+      const hook = (stamps.find((s) => s.sec >= start) ?? stamps[0])?.line.replace(/^[^:]{1,60}: /, "") ?? "A moment worth clipping";
+      const candidates = [
+        { start_sec: start, end_sec: end, score: 8, hook: hook.slice(0, 120), why: "Mock scout: a crisp, self-contained moment.", platforms: ["tiktok", "reels"] },
+        { start_sec: last + 900, end_sec: last + 930, score: 9, hook: "invented", why: "timestamps outside the chunk", platforms: ["shorts"] },
+      ];
+      return json({ id: `msg_mock_${calls.anthropic}`, type: "message", role: "assistant", model: body.model, content: [{ type: "text", text: JSON.stringify({ candidates }) }], stop_reason: "end_turn", stop_sequence: null, usage });
+    }
     // ---- Groq ----
     if (url.host === "groq.test" && method === "POST") {
       calls.groq++;
@@ -173,8 +221,12 @@ export function createMockServices(initial: MockRecording[], opts: { pageSize?: 
     fetchImpl,
     calls,
     groqRequests,
+    anthropicRequests,
     setRecordings(recs) {
       recordings = recs;
+    },
+    setAnthropicMode(mode) {
+      anthropicMode = mode;
     },
   };
 }

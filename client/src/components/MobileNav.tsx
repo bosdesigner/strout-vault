@@ -1,6 +1,6 @@
 import { NavLink } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardCheck, FolderKanban, LayoutGrid, Users } from "lucide-react";
+import { ClipboardCheck, FolderKanban, LayoutGrid, Scissors, Users } from "lucide-react";
 import { api } from "@/lib/api";
 import { useWorkspace } from "@/lib/workspace";
 import { cn } from "@/lib/utils";
@@ -20,11 +20,12 @@ export function MobileNav({ owner }: { owner: boolean }) {
     { to: "/", label: "Library", icon: LayoutGrid, end: true },
     { to: "/people", label: "People", icon: Users },
     { to: "/projects", label: "Projects", icon: FolderKanban },
+    { to: "/clips", label: "Clips", icon: Scissors },
     { to: "/review", label: "Review", icon: ClipboardCheck, badge: reviewCount.data?.openCount },
   ];
   return (
     <nav aria-label="Primary" className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/85 lg:hidden safe-bottom">
-      <ul className="mx-auto grid max-w-md grid-cols-4">
+      <ul className="mx-auto grid max-w-md grid-cols-5">
         {items.map((it) => (
           <li key={it.to}>
             <NavLink
