@@ -7,7 +7,7 @@ modules = ["nodejs-20"]
 hidden = [".config", "dist", "node_modules", ".data"]
 
 [deployment]
-deploymentTarget = "autoscale"
+deploymentTarget = "scheduled"
 build = ["npm", "run", "build"]
 run = ["npm", "start"]
 
