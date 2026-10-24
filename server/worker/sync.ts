@@ -34,6 +34,9 @@ export interface SyncSummary {
 
 const CURSOR_KEY = "zoom_cursor_month";
 const MAX_DOWNLOAD_ATTEMPTS = 4;
+
+/** The bucket refused our write (bad key, no capability). Not the file's fault, so it does not use up the file's retries. */
+export class StorageWriteError extends Error {}
 // Small files first so a meeting's transcript and audio land before its video.
 const KIND_ORDER: Record<string, number> = { transcript_vtt: 0, caption_vtt: 1, chat: 2, audio: 3, video: 4 };
 
@@ -144,10 +147,15 @@ export async function syncZoom(ctx: WorkerContext, opts: { dryRun?: boolean } = 
       if (r.status !== "failed") await afterVerified(ctx, file);
     } catch (err) {
       const msg = (err as Error).message.slice(0, 500);
-      await markFile(ctx, file.id, { status: "failed", error: msg });
+      await markFile(ctx, file.id, { status: "failed", error: msg, countAttempt: !(err instanceof StorageWriteError) });
       summary.filesFailed++;
       summary.errors.push(`download ${file.kind} for "${file.title ?? file.interaction_id}": ${msg}`);
       ctx.log(`zoom:   failed ${file.kind} (${file.title ?? file.interaction_id}): ${msg}`);
+      if (err instanceof StorageWriteError) {
+        // Every later file would fail the same way; stop and let the next run try again.
+        summary.stoppedEarly = "storage refused writes";
+        break;
+      }
     }
   }
   return summary;
@@ -198,7 +206,7 @@ async function downloadAndVerify(ctx: WorkerContext, client: ZoomClient, file: P
       // Say which side failed: Zoom errors already read "HTTP 4xx downloading …".
       const e = err as Error & { name?: string; $metadata?: { httpStatusCode?: number } };
       const status = e.$metadata?.httpStatusCode ? ` HTTP ${e.$metadata.httpStatusCode}` : "";
-      throw new Error(`storage ${file.storage}${file.bucket ? ` (${file.bucket})` : ""} refused the write:${status} ${e.name && e.name !== "Error" ? `${e.name}: ` : ""}${e.message}`.trim());
+      throw new StorageWriteError(`storage ${file.storage}${file.bucket ? ` (${file.bucket})` : ""} refused the write:${status} ${e.name && e.name !== "Error" ? `${e.name}: ` : ""}${e.message}`.trim());
     }
     if (!expected || bytes === expected) {
       await markFile(ctx, file.id, { status: "verified", bytes, sha256 });
@@ -221,12 +229,12 @@ async function downloadAndVerify(ctx: WorkerContext, client: ZoomClient, file: P
   return result;
 }
 
-async function markFile(ctx: WorkerContext, id: number, patch: { status: string; bytes?: number; sha256?: string; error?: string | null }) {
+async function markFile(ctx: WorkerContext, id: number, patch: { status: string; bytes?: number; sha256?: string; error?: string | null; countAttempt?: boolean }) {
   await ctx.pool.query(
     `update media set status = $2, bytes = coalesce($3, bytes), sha256 = coalesce($4, sha256), last_error = $5,
-            attempts = attempts + 1, verified_at = case when $2 in ('verified','verified_stable') then now() else verified_at end
+            attempts = attempts + $6, verified_at = case when $2 in ('verified','verified_stable') then now() else verified_at end
       where id = $1`,
-    [id, patch.status, patch.bytes ?? null, patch.sha256 ?? null, patch.error ?? null],
+    [id, patch.status, patch.bytes ?? null, patch.sha256 ?? null, patch.error ?? null, patch.countAttempt === false ? 0 : 1],
   );
 }
 

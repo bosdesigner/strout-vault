@@ -29,6 +29,8 @@ interface Item {
   note?: string | null;
   status?: string | null;
   pendingFiles?: number;
+  failedFiles?: number;
+  fileError?: string | null;
   updatedAt: string | null;
 }
 interface Overview {
@@ -178,8 +180,20 @@ export default function PipelinePage() {
                     {[SOURCE_LABEL[it.source ?? ""] ?? it.source, formatDate(it.occurredAt), it.pendingFiles ? `${it.pendingFiles} file(s) still downloading` : null].filter(Boolean).join(" · ")}
                   </p>
                   {it.note && <p className="mt-1 break-words text-xs text-amber-700 dark:text-amber-400">{it.note}</p>}
+                  {it.failedFiles ? (
+                    <p className="mt-1 break-words text-xs text-destructive">
+                      {it.failedFiles} download{it.failedFiles === 1 ? "" : "s"} failed{it.fileError ? `: ${it.fileError}` : ""}
+                    </p>
+                  ) : null}
                 </div>
-                <StatusChip status={it.status} />
+                <div className="flex shrink-0 items-center gap-2">
+                  {it.failedFiles ? (
+                    <Button size="sm" variant="outline" className="gap-1.5" onClick={() => retry.mutate(it.id)} disabled={retry.isPending} data-testid="retry-downloads">
+                      <RefreshCw className="h-3.5 w-3.5" /> Retry downloads
+                    </Button>
+                  ) : null}
+                  <StatusChip status={it.status} />
+                </div>
               </li>
             ))}
           </ul>

@@ -297,6 +297,29 @@ describe("worker run", () => {
     expect(r.summary.zoom?.filesVerified).toBe(0);
     expect(r.summary.transcribe?.done).toBe(0);
   });
+
+  it("a refused storage write is named, stops the run early and does not use up the file's retries", async () => {
+    // Make the destination unwritable: a directory where the object would go, so the local driver's rename fails.
+    const e = await one(`select m.id, m.storage_key, m.attempts from media m join interactions i on i.id = m.interaction_id where i.source_ref = $1`, [recordings[4].uuid]);
+    const dest = path.join(STORAGE, String(e.storage_key));
+    fs.mkdirSync(dest, { recursive: true });
+    try {
+      const r = await runWorker(makeCtx(makeConfig()), { trigger: "test", steps: ["zoom"] });
+      expect(r.summary.zoom?.filesFailed).toBe(1);
+      expect(r.summary.zoom?.stoppedEarly).toBe("storage refused writes");
+      expect(r.summary.zoom?.errors[0]).toMatch(/^download audio for "Arrives after the deadline": storage local refused the write:/);
+      const after = await one(`select status, attempts, last_error from media where id = $1`, [e.id]);
+      expect(after.status).toBe("failed");
+      expect(after.attempts).toBe(Number(e.attempts)); // unchanged: the bucket, not the file, was the problem
+      expect(String(after.last_error)).toMatch(/storage local .*refused the write/);
+    } finally {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+    // With storage writable again the same file goes through on the next run.
+    const r2 = await runWorker(makeCtx(makeConfig()), { trigger: "test", steps: ["zoom"] });
+    expect(r2.summary.zoom?.filesVerified).toBe(1);
+    expect((await one(`select status from media where id = $1`, [e.id])).status).toBe("verified");
+  });
 });
 
 describe("pipeline API", () => {
@@ -322,10 +345,18 @@ describe("pipeline API", () => {
     expect(body.config.groqBudgetUsd).toBeGreaterThan(0);
     expect(body.state.zoomCursor).toBe(new Date().toISOString().slice(0, 7));
     expect(body.report.queue.ready).toBeGreaterThan(0);
-    const waitingTitles = (body.waiting as Array<{ title: string; pendingFiles: number }>).map((w) => w.title);
-    expect(waitingTitles).toContain("Zoom lost the file");
-    expect((body.waiting as Array<{ title: string; pendingFiles: number }>).find((w) => w.title === "Zoom lost the file")?.pendingFiles).toBe(1);
+    const waiting = body.waiting as Array<{ id: number; title: string; pendingFiles: number; failedFiles: number; fileError: string | null }>;
+    const lost = waiting.find((w) => w.title === "Zoom lost the file");
+    expect(lost).toMatchObject({ pendingFiles: 1, failedFiles: 1 });
+    expect(lost?.fileError).toMatch(/HTTP 404/);
     expect(body.report.missingOffsite.total).toBeGreaterThanOrEqual(0);
+
+    // "Retry downloads" on a waiting recording resets its failed files so the next run fetches them again.
+    const before = await one(`select attempts from media where interaction_id = $1`, [lost!.id]);
+    expect(Number(before.attempts)).toBeGreaterThan(1);
+    const retry = await s.agent.post("/api/pipeline/retry").set("x-csrf-token", s.csrf).send({ interactionId: lost!.id });
+    expect(retry.status).toBe(200);
+    expect(await one(`select status, attempts, last_error from media where interaction_id = $1`, [lost!.id])).toEqual({ status: "pending", attempts: 0, last_error: null });
   });
 
   it("marks a broken upload failed and Retry puts it back in the queue", async () => {
