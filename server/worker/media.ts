@@ -35,6 +35,34 @@ function run(bin: string, args: string[], opts: { maxBuffer?: number } = {}): Pr
   });
 }
 
+export interface VideoInfo {
+  duration: number | null;
+  width: number | null;
+  height: number | null;
+  hasAudio: boolean;
+  hasVideo: boolean;
+}
+
+/** Streams and duration of a file or URL (ffprobe reads https with range requests). */
+export async function probeVideo(tools: MediaTools, input: string): Promise<VideoInfo> {
+  const { stdout } = await run(tools.ffprobe, ["-v", "error", "-show_entries", "stream=codec_type,width,height:format=duration", "-of", "json", input]);
+  const parsed = JSON.parse(stdout || "{}") as { streams?: Array<{ codec_type?: string; width?: number; height?: number }>; format?: { duration?: string } };
+  const video = parsed.streams?.find((s) => s.codec_type === "video");
+  const d = parseFloat(parsed.format?.duration ?? "");
+  return {
+    duration: Number.isFinite(d) && d > 0 ? d : null,
+    width: video?.width ?? null,
+    height: video?.height ?? null,
+    hasAudio: !!parsed.streams?.some((s) => s.codec_type === "audio"),
+    hasVideo: !!video,
+  };
+}
+
+/** Run ffmpeg with the given arguments (no shell; paths and URLs are plain arguments). */
+export async function ffmpeg(tools: MediaTools, args: string[]): Promise<void> {
+  await run(tools.ffmpeg, ["-y", "-v", "error", "-nostdin", ...args]);
+}
+
 /** Duration in seconds, or null when ffprobe cannot tell. */
 export async function probeDuration(tools: MediaTools, file: string): Promise<number | null> {
   const { stdout } = await run(tools.ffprobe, ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file]);

@@ -6,10 +6,13 @@ import os from "node:os";
 import type { WorkerContext } from "./context.ts";
 import { syncZoom, type SyncSummary } from "./sync.ts";
 import { processTranscriptions, type TranscribeSummary } from "./transcribe.ts";
+import { processScouting, type ScoutSummary } from "./scout.ts";
+import { processCuts, type CutSummary } from "./cut.ts";
 import { buildReport, type PipelineReport } from "./report.ts";
 import { setState } from "./sync.ts";
 
-export type Step = "zoom" | "transcribe" | "report";
+export type Step = "zoom" | "transcribe" | "scout" | "cut" | "report";
+export const ALL_STEPS: Step[] = ["zoom", "transcribe", "scout", "cut", "report"];
 
 export interface RunOptions {
   trigger?: "schedule" | "manual" | "test";
@@ -20,6 +23,8 @@ export interface RunOptions {
 export interface RunSummary {
   zoom?: SyncSummary;
   transcribe?: TranscribeSummary;
+  scout?: ScoutSummary;
+  cut?: CutSummary;
   report?: PipelineReport;
   skipped?: string;
   durationSec: number;
@@ -37,6 +42,11 @@ export interface WorkerConfigSnapshot {
   archiveStorage: string;
   archiveBucket: string | null;
   overlapMonths: number;
+  scoutConfigured?: boolean;
+  scoutModel?: string;
+  scoutBudgetUsd?: number;
+  clipFormat?: string;
+  clipCaptions?: boolean;
 }
 
 export function configSnapshot(ctx: WorkerContext): WorkerConfigSnapshot {
@@ -50,6 +60,11 @@ export function configSnapshot(ctx: WorkerContext): WorkerConfigSnapshot {
     archiveStorage: ctx.storage.archiveTarget.storage,
     archiveBucket: ctx.storage.archiveTarget.bucket,
     overlapMonths: c.ZOOM_SYNC_OVERLAP_MONTHS,
+    scoutConfigured: !!c.ANTHROPIC_API_KEY && c.SCOUT_MONTHLY_BUDGET_USD > 0,
+    scoutModel: c.SCOUT_MODEL,
+    scoutBudgetUsd: c.ANTHROPIC_API_KEY ? c.SCOUT_MONTHLY_BUDGET_USD : 0,
+    clipFormat: c.CLIP_FORMAT,
+    clipCaptions: c.CLIP_CAPTIONS === "1",
   };
 }
 
@@ -62,7 +77,7 @@ export interface RunResult {
 const LOCK_NAME = "strout-vault-worker";
 
 export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Promise<RunResult> {
-  const steps = opts.steps ?? ["zoom", "transcribe", "report"];
+  const steps = opts.steps ?? ALL_STEPS;
   const startedAt = ctx.now();
   const summary: RunSummary = { durationSec: 0, errors: [], config: configSnapshot(ctx) };
 
@@ -95,6 +110,8 @@ export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Prom
       try {
         if (step === "zoom") summary.zoom = await syncZoom(ctx, { dryRun: opts.dryRun });
         else if (step === "transcribe" && !opts.dryRun) summary.transcribe = await processTranscriptions(ctx);
+        else if (step === "scout" && !opts.dryRun) summary.scout = await processScouting(ctx);
+        else if (step === "cut" && !opts.dryRun) summary.cut = await processCuts(ctx);
         else if (step === "report") summary.report = await buildReport(ctx.pool, ctx.now());
       } catch (err) {
         ok = false;
@@ -137,14 +154,26 @@ export function formatRunSummary(s: RunSummary): string {
       `transcribe: ${t.done}/${t.candidates} done (zoom transcript ${t.viaZoomTranscript}, captions ${t.viaZoomCaptions}, groq ${t.viaGroq}), ${t.waitingOnBudget} waiting on budget, ${t.failed} failed, $${t.spentUsd.toFixed(3)} spent${t.stoppedEarly ? `; stopped early: ${t.stoppedEarly}` : ""}`,
     );
   }
+  if (s.scout) {
+    const c = s.scout;
+    lines.push(
+      c.configured
+        ? `scout: ${c.scanned}/${c.candidatesRecordings} recording(s) read, ${c.found} candidate(s) found, ${c.waitingOnBudget} waiting on budget, ${c.failed} failed, $${c.spentUsd.toFixed(3)} spent${c.stoppedEarly ? `; stopped early: ${c.stoppedEarly}` : ""}`
+        : `scout: off${c.candidatesRecordings ? ` (${c.candidatesRecordings} recording(s) waiting)` : ""}`,
+    );
+  }
+  if (s.cut) {
+    const k = s.cut;
+    lines.push(`clips: ${k.rendered}/${k.approved} approved clip(s) rendered, ${k.failed} failed (${(k.bytes / 1024 / 1024).toFixed(1)} MB)${k.stoppedEarly ? `; stopped early: ${k.stoppedEarly}` : ""}`);
+  }
   if (s.report) {
     const r = s.report;
     lines.push(
-      `queue: ${r.queue.queued} queued, ${r.queue.transcribing} transcribing, ${r.queue.failed} failed, ${r.queue.ready} ready; ${r.downloads.pending + r.downloads.failed} download(s) pending; ${r.missingOffsite.total} recording(s) without an off-site copy; groq this month $${r.spend.groqUsd.toFixed(2)}`,
+      `queue: ${r.queue.queued} queued, ${r.queue.transcribing} transcribing, ${r.queue.failed} failed, ${r.queue.ready} ready; ${r.downloads.pending + r.downloads.failed} download(s) pending; ${r.missingOffsite.total} recording(s) without an off-site copy; groq this month $${r.spend.groqUsd.toFixed(2)}${r.clips ? `; clips: ${r.clips.toReview} to review, ${r.clips.approved} approved, ${r.clips.cut} cut; claude this month $${(r.spend.anthropicUsd ?? 0).toFixed(2)}` : ""}`,
     );
   }
   // Per-item errors from each step, a few of them: the full lists live in the run's summary JSON.
-  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.transcribe?.errors ?? [])];
+  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
   if (itemErrors.length) {
     const shown = itemErrors.slice(0, 3);
     lines.push(`errors: ${shown.join(" | ")}${itemErrors.length > shown.length ? ` | …and ${itemErrors.length - shown.length} more` : ""}`);

@@ -64,6 +64,24 @@ const envSchema = z.object({
   TRANSCRIBE_PREFER: z.enum(["zoom", "groq"]).default("zoom"),
   FFMPEG_BIN: z.string().default("ffmpeg"),
   FFPROBE_BIN: z.string().default("ffprobe"),
+  // ---- Clips (Phase 5) ----
+  // Claude reads new transcripts for clip-worthy moments. Costs money: nothing is sent unless
+  // ANTHROPIC_API_KEY is set AND the month's spend stays under SCOUT_MONTHLY_BUDGET_USD (default 0 = off).
+  ANTHROPIC_API_KEY: z.string().optional(),
+  ANTHROPIC_API_URL: z.string().optional(),
+  SCOUT_MODEL: z.string().default("claude-opus-5-5"),
+  SCOUT_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("medium"),
+  SCOUT_MONTHLY_BUDGET_USD: z.coerce.number().min(0).default(0),
+  // Which recording sources are worth scouting (phone calls with clients are not clip material).
+  SCOUT_SOURCES: z.string().default("zoom,meet,upload"),
+  SCOUT_MAX_PER_RUN: z.coerce.number().int().positive().default(20),
+  // Rendering approved candidates with ffmpeg: 9:16 crop ("vertical") or the whole frame ("full").
+  CLIP_FORMAT: z.enum(["vertical", "full"]).default("vertical"),
+  CLIP_PADDING_SEC: z.coerce.number().min(0).max(10).default(1),
+  CLIP_CAPTIONS: z.enum(["0", "1"]).default("1"),
+  CLIP_MAX_PER_RUN: z.coerce.number().int().positive().default(10),
+  // Directory holding the caption font (DejaVu Sans Bold ships in server/worker/assets/fonts).
+  CLIP_FONTS_DIR: z.string().optional(),
   // One run stops starting new work after this many seconds so hourly runs never overlap.
   WORKER_TIME_BUDGET_SEC: z.coerce.number().int().positive().default(50 * 60),
   // Bytes one run may download from Zoom before it stops and leaves the rest for the next run.
