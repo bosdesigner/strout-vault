@@ -70,6 +70,7 @@ export function TopBar({ user }: { user: { email: string; role: string; displayN
       <NavLink to="/" end className={navClass}>Library</NavLink>
       <NavLink to="/people" className={navClass}>People</NavLink>
       <NavLink to="/projects" className={navClass}>Projects</NavLink>
+      <NavLink to="/clips" className={navClass}>Clips</NavLink>
       <NavLink to="/review" className={navClass}>
         Review
         {!!reviewCount.data?.openCount && (

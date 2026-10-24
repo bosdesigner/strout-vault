@@ -98,6 +98,8 @@ export interface ClipCandidateItem {
   hook: string | null;
   why: string | null;
   status: "new" | "approved" | "rejected" | "cut" | string;
+  /** Set once the worker rendered the clip into the bucket (downloadable). */
+  clipMediaId?: number | null;
 }
 
 export interface JobItem {

@@ -69,7 +69,7 @@ export async function getRecording(pool: pg.Pool, storage: StorageDriver, id: nu
       [id],
     ),
     pool.query(
-      `select id, start_sec, end_sec, score, hook, why, status from clip_candidates
+      `select id, start_sec, end_sec, score, hook, why, status, clip_media_id from clip_candidates
        where interaction_id = $1 order by score desc, start_sec`,
       [id],
     ),
@@ -191,6 +191,7 @@ export async function getRecording(pool: pg.Pool, storage: StorageDriver, id: nu
       hook: c.hook,
       why: c.why,
       status: c.status,
+      clipMediaId: c.clip_media_id ?? null,
     })),
     projects: projects.rows.map((p) => ({ id: p.id, name: p.name, status: p.status, workspaceId: p.workspace_id, workspaceName: p.workspace_name })),
     speakers: speakers.rows.map((s) => ({ label: s.speaker, partyId: s.party_id ?? null, lines: s.lines })),
