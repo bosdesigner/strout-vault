@@ -1,6 +1,14 @@
 # Strout Vault on Replit.
 # Workspace: `npm run dev` serves API + client from one process on PORT.
-# Deployment: build once, then `npm start` serves dist/ on PORT.
+# Deployment: build once, then `npm start` serves dist/ on PORT (the website).
+#
+# The worker is a second Repl of this same repository published as a Scheduled
+# deployment with the secret WORKER_MODE=1. Replit writes the deployment type
+# into this file when you publish, and its automatic "Published your App"
+# commits would push that to GitHub. So in each Repl, after the first publish:
+#     git update-index --skip-worktree .replit
+# Git then leaves that Repl's copy of this file alone, in both directions.
+# This committed version is the website's (autoscale).
 run = "npm run dev"
 entrypoint = "server/index.ts"
 modules = ["nodejs-20", "web"]
@@ -14,6 +22,10 @@ run = ["npm", "start"]
 [[ports]]
 localPort = 3000
 externalPort = 80
+
+[[ports]]
+localPort = 24678
+externalPort = 3000
 
 [nix]
 channel = "stable-25_05"
