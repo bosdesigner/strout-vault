@@ -15,6 +15,8 @@ export const PG_DATA_DIR = path.join(DATA_DIR, "pg");
 export const MIGRATIONS_DIR = path.join(REPO_ROOT, "db/migrations");
 export const SEED_FILE = path.join(REPO_ROOT, "db/seed.sql");
 export const SAMPLE_MEDIA_DIR = path.join(REPO_ROOT, "db/sample-media");
+/** The two restricted Postgres roles the MCP server connects as (see db/migrations/0006_mcp.sql). */
+export const MCP_ROLES = ["mcp_reader", "mcp_proposer"] as const;
 
 export interface LocalServer {
   /** Connection URL for the maintenance database. */
@@ -144,10 +146,10 @@ async function startDocker(): Promise<LocalServer | null> {
       log(`starting docker container ${name}`);
       spawnSync("docker", ["start", name], { stdio: "inherit" });
     } else {
-      log(`creating docker container ${name} (pgvector/pgvector:pg16) on port ${LOCAL_PORT}`);
+      log(`creating docker container ${name} (pgvector/pgvector:pg17) on port ${LOCAL_PORT}`);
       const r = spawnSync(
         "docker",
-        ["run", "-d", "--name", name, "-p", `${LOCAL_PORT}:5432`, "-e", "POSTGRES_HOST_AUTH_METHOD=trust", "pgvector/pgvector:pg16"],
+        ["run", "-d", "--name", name, "-p", `${LOCAL_PORT}:5432`, "-e", "POSTGRES_HOST_AUTH_METHOD=trust", "pgvector/pgvector:pg17"],
         { stdio: "inherit" },
       );
       if (r.status !== 0) return null;
@@ -161,7 +163,7 @@ async function startDocker(): Promise<LocalServer | null> {
  * Find or start a local Postgres, in this order:
  *   1. LOCAL_PG_URL (must be localhost) - use an existing server you run yourself
  *   2. a cluster this script manages under .data/pg (needs pg_ctl/initdb on the machine)
- *   3. a docker container (pgvector/pgvector:pg16)
+ *   3. a docker container (pgvector/pgvector:pg17; `docker compose up -d` starts the same image)
  */
 export async function ensureLocalServer(): Promise<LocalServer> {
   const envUrl = process.env.LOCAL_PG_URL;
@@ -181,10 +183,36 @@ export async function ensureLocalServer(): Promise<LocalServer> {
   );
 }
 
-export function databaseUrlFor(server: LocalServer, dbName: string): string {
+export function databaseUrlFor(server: LocalServer, dbName: string, role?: string): string {
   const u = new URL(server.adminUrl);
   u.pathname = `/${dbName}`;
+  if (role) {
+    u.username = role;
+    u.password = "";
+  }
   return u.toString();
+}
+
+/**
+ * Creates the restricted MCP roles (login, no password: local servers use trust auth) when
+ * they do not exist. Cluster-wide, so once per server. On a server we do not administer
+ * (LOCAL_PG_URL) this may be refused; the caller then falls back to the admin role.
+ */
+export async function ensureMcpRoles(server: LocalServer, say: (m: string) => void = log): Promise<boolean> {
+  const admin = new pg.Client({ connectionString: server.adminUrl });
+  await admin.connect();
+  try {
+    for (const role of MCP_ROLES) {
+      const { rowCount } = await admin.query(`select 1 from pg_roles where rolname = $1`, [role]);
+      if (!rowCount) await admin.query(`create role "${role}" login`);
+    }
+    return true;
+  } catch (err) {
+    say(`could not create the MCP roles (${(err as Error).message}); MCP tests and dev will use the admin role instead`);
+    return false;
+  } finally {
+    await admin.end();
+  }
 }
 
 export interface ResetOptions {
@@ -194,10 +222,20 @@ export interface ResetOptions {
   quiet?: boolean;
 }
 
+export interface ResetResult {
+  url: string;
+  vectorAvailable: boolean;
+  /** Connection URLs for the restricted MCP roles (the admin URL when the roles could not be created). */
+  readerUrl: string;
+  proposerUrl: string;
+  mcpRoles: boolean;
+}
+
 /** Drops and recreates a LOCAL database, applies db/migrations/*.sql in order, loads db/seed.sql. */
-export async function resetDatabase(server: LocalServer, dbName: string, opts: ResetOptions = {}): Promise<{ url: string; vectorAvailable: boolean }> {
+export async function resetDatabase(server: LocalServer, dbName: string, opts: ResetOptions = {}): Promise<ResetResult> {
   if (!/^[a-z_][a-z0-9_]*$/.test(dbName)) throw new Error("database name must be a simple identifier");
   const say = opts.quiet ? () => {} : log;
+  const mcpRoles = await ensureMcpRoles(server, say);
   const admin = new pg.Client({ connectionString: server.adminUrl });
   await admin.connect();
   try {
@@ -244,7 +282,13 @@ export async function resetDatabase(server: LocalServer, dbName: string, opts: R
   } finally {
     await c.end();
   }
-  return { url, vectorAvailable };
+  return {
+    url,
+    vectorAvailable,
+    readerUrl: mcpRoles ? databaseUrlFor(server, dbName, "mcp_reader") : url,
+    proposerUrl: mcpRoles ? databaseUrlFor(server, dbName, "mcp_proposer") : url,
+    mcpRoles,
+  };
 }
 
 /** Copies db/sample-media/* into the local storage dir and records their real size + sha256. */
@@ -265,7 +309,7 @@ export async function installSampleMedia(c: pg.Client, storageDir: string, say: 
 }
 
 /** Writes a development .env if none exists so `npm run dev` works right away. */
-export function ensureDevEnv(databaseUrl: string): { created: boolean; email: string; password: string } {
+export function ensureDevEnv(databaseUrl: string, mcp?: { readerUrl: string; proposerUrl: string }): { created: boolean; email: string; password: string } {
   const envPath = path.join(REPO_ROOT, ".env");
   const email = "dev@strout.local";
   const password = "vault-dev-password";
@@ -281,6 +325,11 @@ ADMIN_EMAIL=${email}
 ADMIN_PASSWORD_HASH=${hash}
 STORAGE_DRIVER=local
 LOCAL_STORAGE_DIR=./.data/storage
+# MCP server (docs/MCP.md): restricted roles for the read tools and propose_update, and a
+# deterministic fake embedding provider so hybrid search works locally without an API key.
+MCP_READER_DATABASE_URL=${mcp?.readerUrl ?? databaseUrl}
+MCP_PROPOSER_DATABASE_URL=${mcp?.proposerUrl ?? databaseUrl}
+EMBEDDING_PROVIDER=fake
 `;
   fs.writeFileSync(envPath, body);
   return { created: true, email, password };

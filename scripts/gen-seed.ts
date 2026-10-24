@@ -90,6 +90,11 @@ const roles = [
   { ws: "phalanx", party: P["Daniel Okafor"], role: "partner", status: "active", market: "Dallas", detail: "co-founder" },
   { ws: "phalanx", party: P["Jordan Ellis"], role: "prospect", status: "prospect", market: "Dallas", detail: "pilot customer" },
   { ws: "sepp", party: P["Rachel Kim"], role: "advisor", status: "active", market: "Houston", detail: "energy policy" },
+  // People who span workspaces (the MCP scope tests lean on these): Rachel also advises CredVault
+  // and Priya sits on the Phalanx advisory side, so a token scoped to one of their workspaces must
+  // show only that side of them.
+  { ws: "credvault", party: P["Rachel Kim"], role: "advisor", status: "active", market: "Austin", detail: "intro to Harbor Point" },
+  { ws: "phalanx", party: P["Priya Natarajan"], role: "advisor", status: "active", market: "Austin", detail: "security market intros" },
 ];
 
 const affiliations = [
@@ -362,6 +367,21 @@ for (const r of recs) {
   if (r.playableSample === 3) {
     r.seedPhraseAt = [{ at: 55, text: "The porch openings measure thirty one and a half by seventy two, and the house is not square.", speakerIdx: 0 }];
   }
+}
+
+// Distinctive passages in five recordings, one per workspace, for the semantic-search quality
+// check (docs/mcp-verification/semantic-check.md): each is said in exactly one recording and the
+// check's queries paraphrase them without sharing keywords.
+const DISTINCTIVE: Array<[string, number, string]> = [
+  ["Harbor Point seed terms", 300, "Priya wants a board observer seat and her pro rata right, and she pushed the pre-money down to five and a half million before she would sign."],
+  ["Phalanx pilot scope with Daniel", 240, "Daniel suggested we cap the pilot at one site and ninety days so their security committee can approve it without waiting for a budget cycle."],
+  ["Gulf Coast Millwork stock check", 120, "Lena has cypress on the floor today but the cedar is three weeks out, so we either switch species or push the install."],
+  ["Conroe shoot day planning", 400, "We shoot at sunrise so the drone pass clears before the wind, then move inside for the founder interview on the shop floor."],
+  ["SEPP grant application strategy", 200, "Rachel says the state efficiency grant closes in March and we need a county letter of support before we can apply."],
+];
+for (const [title, at, text] of DISTINCTIVE) {
+  const r = recs.find((x) => x.title === title)!;
+  r.seedPhraseAt = [...(r.seedPhraseAt ?? []), { at, text, speakerIdx: 0 }];
 }
 
 // Tags and summaries.

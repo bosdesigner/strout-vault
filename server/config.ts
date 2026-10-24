@@ -87,6 +87,30 @@ const envSchema = z.object({
   // Bytes one run may download from Zoom before it stops and leaves the rest for the next run.
   WORKER_MAX_BYTES_PER_RUN: z.coerce.number().positive().default(20 * 1024 * 1024 * 1024),
   WORKER_TMP_DIR: z.string().optional(),
+
+  // ---- Embeddings + the MCP server (docs/MCP.md) ----
+  // Which provider fills chunks.embedding (vector(1024)) and embeds search queries.
+  //   voyage : Voyage AI voyage-3.5 (1024 dims natively, document/query input types). Needs VOYAGE_API_KEY.
+  //   openai : text-embedding-3-small/large with dimensions=1024. Needs OPENAI_API_KEY.
+  //   fake   : deterministic hashing, no network. Development and tests only.
+  //   off    : no chunking or embedding; search_conversations is keyword-only.
+  EMBEDDING_PROVIDER: z.enum(["voyage", "openai", "fake", "off"]).default("off"),
+  EMBEDDING_MODEL: z.string().optional(),
+  VOYAGE_API_KEY: z.string().optional(),
+  VOYAGE_API_URL: z.string().optional(),
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_API_URL: z.string().optional(),
+  // Recordings embedded per worker run and parallel provider requests.
+  EMBED_MAX_PER_RUN: z.coerce.number().int().positive().default(50),
+  EMBED_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(2),
+  // Restricted Postgres roles the MCP server connects as (db/migrations/0006_mcp.sql). Required in
+  // production; development and tests fall back to DATABASE_URL with a warning when unset.
+  MCP_READER_DATABASE_URL: z.string().optional(),
+  MCP_PROPOSER_DATABASE_URL: z.string().optional(),
+  MCP_RATE_LIMIT_PER_MIN: z.coerce.number().int().positive().default(60),
+  OAUTH_ACCESS_TOKEN_TTL_SEC: z.coerce.number().int().positive().default(3600),
+  OAUTH_REFRESH_TOKEN_TTL_SEC: z.coerce.number().int().positive().default(30 * 24 * 3600),
+  OAUTH_CODE_TTL_SEC: z.coerce.number().int().positive().default(10 * 60),
 });
 
 export type Config = z.infer<typeof envSchema> & {

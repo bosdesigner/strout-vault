@@ -16,6 +16,9 @@ pg.types.setTypeParser(20, (v) => Number(v)); // int8
 pg.types.setTypeParser(700, (v) => parseFloat(v)); // float4
 pg.types.setTypeParser(701, (v) => parseFloat(v)); // float8
 pg.types.setTypeParser(1700, (v) => parseFloat(v)); // numeric
+// `date` columns (due_date, started_at, ended_at) stay "YYYY-MM-DD" strings instead of becoming
+// local-midnight Date objects, which the API would otherwise render as "Wed May 24".
+pg.types.setTypeParser(1082, (v) => v); // date
 
 export function createDb(databaseUrl: string): DbHandle {
   const pool = new pg.Pool({

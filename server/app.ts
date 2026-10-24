@@ -27,6 +27,8 @@ import { twilioWebhooksRouter } from "./routes/twilioWebhooks.ts";
 import { pipelineRouter } from "./routes/pipeline.ts";
 import type { Mailer } from "./mail/types.ts";
 import { MemoryMailer } from "./mail/memory.ts";
+import { mountMcp, type MountOptions } from "./mcp/index.ts";
+import { mcpAdminRouter } from "./routes/mcpAdmin.ts";
 
 export interface CreateAppOptions {
   config: Config;
@@ -40,6 +42,8 @@ export interface CreateAppOptions {
   serveStatic?: boolean;
   /** Dev-only hook: mount Vite's middleware for the client. */
   devMiddleware?: (app: Express) => Promise<void>;
+  /** MCP server options (tests inject a fake embedding provider and a clock). */
+  mcp?: MountOptions;
 }
 
 export async function createApp(opts: CreateAppOptions): Promise<{ app: Express; ctx: AppContext }> {
@@ -74,6 +78,9 @@ export async function createApp(opts: CreateAppOptions): Promise<{ app: Express;
   app.use(healthRouter(ctx));
   // Public but signature-verified: Twilio voice/status/recording webhooks.
   app.use("/webhooks/twilio", twilioWebhooksRouter(ctx));
+  // The MCP server (/mcp, bearer tokens) and its OAuth 2.1 endpoints (/authorize, /token, /register,
+  // /revoke, /.well-known/*, /oauth/consent). Every tool call is scoped and audited; see docs/MCP.md.
+  ctx.mcp = await mountMcp(app, ctx, { fetchImpl: ctx.fetchImpl, ...(opts.mcp ?? {}) });
 
   const api = express.Router();
   api.use(express.json({ limit: "1mb" }));
@@ -104,6 +111,7 @@ export async function createApp(opts: CreateAppOptions): Promise<{ app: Express;
   api.use("/tracked-numbers", requireOwner(), trackedNumbersRouter(ctx));
   api.use("/calls", requireOwner(), callsRouter(ctx));
   api.use("/pipeline", requireOwner(), pipelineRouter(ctx));
+  api.use("/mcp", requireOwner(), mcpAdminRouter(ctx));
   api.use((_req, res) => {
     res.status(404).json({ error: "not_found" });
   });

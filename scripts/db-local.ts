@@ -16,10 +16,10 @@ const storageDir = process.env.LOCAL_STORAGE_DIR ?? path.join(REPO_ROOT, ".data/
 
 const server = await ensureLocalServer();
 console.log(`[db:local] using ${server.how === "env" ? "LOCAL_PG_URL" : server.how} Postgres at ${server.host}:${server.port}`);
-const { url } = await resetDatabase(server, dbName, { seed: !flag("--no-seed"), storageDir });
+const { url, readerUrl, proposerUrl } = await resetDatabase(server, dbName, { seed: !flag("--no-seed"), storageDir });
 
 if (!flag("--no-env")) {
-  const env = ensureDevEnv(url);
+  const env = ensureDevEnv(url, { readerUrl, proposerUrl });
   if (env.created) {
     console.log(`[db:local] wrote .env for development. Login: ${env.email} / ${env.password}`);
   }

@@ -54,6 +54,16 @@ interface Overview {
     overlapMonths: number;
   };
   state: { zoomCursor: string | null; lastRun: { id: number; ok: boolean; finishedAt: string } | null };
+  embeddings: {
+    embedded: number;
+    pending: number;
+    failed: number;
+    noTranscript: number;
+    chunks: number;
+    lastEmbeddedAt: string | null;
+    provider: { name: string; model: string } | null;
+    workerProvider: string | null;
+  } | null;
 }
 
 /** Owner only: what the hourly worker did, what is waiting, and why. */
@@ -141,6 +151,30 @@ export default function PipelinePage() {
           </ul>
         </Card>
       </section>
+
+      {d.embeddings && (
+        <section aria-label="Semantic index" className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Card title="Semantic index">
+            <p className="text-lg font-medium" data-testid="embedding-counts">
+              {d.embeddings.embedded} embedded · {d.embeddings.pending} pending
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {d.embeddings.failed} failed · {d.embeddings.noTranscript} without a transcript · {d.embeddings.chunks} chunks
+              {d.embeddings.lastEmbeddedAt ? ` · last ${formatRelative(d.embeddings.lastEmbeddedAt)}` : ""}
+            </p>
+          </Card>
+          <Card title="Embedding provider">
+            <p className="text-sm">
+              {d.embeddings.workerProvider && d.embeddings.workerProvider !== "off"
+                ? `worker: ${d.embeddings.workerProvider}`
+                : d.embeddings.provider
+                  ? `${d.embeddings.provider.name} ${d.embeddings.provider.model}`
+                  : "off: search is keyword-only"}
+            </p>
+            <p className="text-xs text-muted-foreground">New transcripts are embedded by the hourly worker; the backlog by <code>npm run embed:backfill</code>. Agents search them at <Link to="/agents" className="underline">Agents &amp; API</Link>.</p>
+          </Card>
+        </section>
+      )}
 
       {d.failed.length > 0 && (
         <Section title={`Failed (${d.failed.length})`} description="The last attempt did not finish. Retry puts the recording back in the queue for the next run.">

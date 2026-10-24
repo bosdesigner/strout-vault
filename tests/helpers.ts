@@ -9,6 +9,7 @@ import { CompositeAuthProvider, MembershipAuthProvider } from "../server/auth/me
 import { MemoryMailer } from "../server/mail/memory.ts";
 import { createApp } from "../server/app.ts";
 import { hashPassword } from "../server/auth/password.ts";
+import type { MountOptions } from "../server/mcp/index.ts";
 
 export const ADMIN_EMAIL = "owner@test.local";
 export const ADMIN_PASSWORD = "correct horse battery staple";
@@ -24,7 +25,7 @@ export interface TestApp {
 
 let cachedHash: string | null = null;
 
-export async function buildTestApp(overrides: Partial<Record<string, string>> = {}, extra: { fetchImpl?: typeof fetch } = {}): Promise<TestApp> {
+export async function buildTestApp(overrides: Partial<Record<string, string>> = {}, extra: { fetchImpl?: typeof fetch; mcp?: MountOptions } = {}): Promise<TestApp> {
   cachedHash ??= await hashPassword(ADMIN_PASSWORD);
   const env: NodeJS.ProcessEnv = {
     NODE_ENV: "test",
@@ -49,8 +50,18 @@ export async function buildTestApp(overrides: Partial<Record<string, string>> = 
     new EnvAdminAuthProvider(config.ADMIN_EMAIL, config.ADMIN_PASSWORD_HASH),
     new MembershipAuthProvider(dbHandle.pool, mailer, { ttlMin: config.MAGIC_LINK_TTL_MIN }),
   ]);
-  const { app } = await createApp({ config, dbHandle, storage, auth, mailer, fetchImpl: extra.fetchImpl, serveStatic: false });
-  return { app, config, dbHandle, storage, mailer, close: () => dbHandle.close() };
+  const { app, ctx } = await createApp({ config, dbHandle, storage, auth, mailer, fetchImpl: extra.fetchImpl, serveStatic: false, mcp: extra.mcp });
+  return {
+    app,
+    config,
+    dbHandle,
+    storage,
+    mailer,
+    close: async () => {
+      await ctx.mcp?.close();
+      await dbHandle.close();
+    },
+  };
 }
 
 /** Pulls the token out of the last magic-link email. */
