@@ -159,9 +159,12 @@ export default function ReviewPage() {
               >
                 <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
                   <Badge variant={open ? "warning" : it.status === "approved" ? "success" : "muted"} className="capitalize">{open ? it.itemType.replace(/_/g, " ") : it.status}</Badge>
-                  <p className="min-w-0 flex-1 text-sm font-medium" data-testid="review-reason">
-                    {it.reason ?? describe(it)}
-                  </p>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium" data-testid="review-reason">
+                      {leadsWithChange(it) ? describe(it) : it.reason ?? describe(it)}
+                    </p>
+                    {leadsWithChange(it) && it.reason && <p className="mt-0.5 text-sm text-muted-foreground" data-testid="review-evidence">{it.reason}</p>}
+                  </div>
                   {it.confidence != null && <span className="text-xs text-muted-foreground tabular">{Math.round(it.confidence * 100)}%</span>}
                 </div>
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -176,7 +179,11 @@ export default function ReviewPage() {
                   {it.party && (
                     <Link to={`/p/${it.party.id}`} className="hover:underline underline-offset-2">{it.party.name}</Link>
                   )}
+                  {it.project && (
+                    <Link to={`/projects/${it.project.id}`} className="hover:underline underline-offset-2">{it.project.name}</Link>
+                  )}
                   {it.speakerLabel && <span>label: {it.speakerLabel}</span>}
+                  {it.proposal.source === "extract" && <span>found by Claude</span>}
                 </div>
                 {open && (
                   <div className="mt-3 flex gap-2">
@@ -197,16 +204,24 @@ export default function ReviewPage() {
   );
 }
 
+/** Agent and extraction proposals lead with the change; their reason (the quote, the evidence) goes underneath. */
+function leadsWithChange(it: ReviewItem): boolean {
+  return ["new_fact", "new_party", "party_edit", "link_party_interaction", "link_project_interaction", "new_relationship"].includes(it.itemType);
+}
+
 function describe(it: ReviewItem): string {
   if (it.itemType === "participant_match" && it.party) {
     return `${it.speakerLabel ?? "A speaker"} is probably ${it.party.name}${it.confidence != null ? ` (${it.confidence.toFixed(2)})` : ""}`;
   }
   const p = it.proposal;
   const who = typeof p.proposed_by === "string" && p.source === "mcp" ? ` · proposed by ${p.proposed_by} (agent)` : "";
-  if (it.itemType === "new_fact" && typeof p.text === "string") return `New ${String(p.kind ?? "fact")}: "${p.text}"${who}`;
+  if (it.itemType === "new_fact" && typeof p.text === "string") {
+    const extra = [typeof p.amount === "number" ? `$${p.amount.toLocaleString()}` : null, typeof p.due_date === "string" ? `due ${p.due_date}` : null].filter(Boolean).join(", ");
+    return `New ${p.kind === "followup" ? "follow-up" : String(p.kind ?? "fact")}: ${p.text}${extra ? ` (${extra})` : ""}${who}`;
+  }
   if (it.itemType === "new_party" && typeof p.name === "string") return `New ${String(p.kind ?? "party")}: ${p.name}${who}`;
   if (it.itemType === "party_edit" && it.party) return `Edit ${it.party.name}: ${Object.keys((p.changes as Record<string, unknown>) ?? {}).join(", ")}${who}`;
-  if (it.itemType === "link_project_interaction") return `Link project #${String(p.project_id)} to this recording${who}`;
+  if (it.itemType === "link_project_interaction") return `Link ${it.project?.name ?? `project #${String(p.project_id)}`} to this recording${who}`;
   if (it.itemType === "link_party_interaction" && it.party) return `Tag ${it.party.name} on this recording${it.speakerLabel ? ` as ${it.speakerLabel}` : ""}${who}`;
   if (it.itemType === "new_relationship") return `New relationship: #${String(p.from_party_id)} ${String(p.kind)} #${String(p.to_party_id)}${who}`;
   if (it.itemType === "interaction_workspace") return `File under ${String(p.workspace_id)}${typeof p.confidence === "number" ? ` (${Math.round(p.confidence * 100)}% sure)` : ""}`;

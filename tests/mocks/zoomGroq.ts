@@ -31,6 +31,8 @@ export interface MockServices {
   calls: { token: number; users: number; recordings: number; downloads: number; groq: number; anthropic: number; cdnAuthHeaders: number };
   groqRequests: Array<{ model: string | null; filename: string | null; hasAuth: boolean }>;
   anthropicRequests: Array<{ model: string; effort: string | null; hasFormat: boolean; betas: string | null; cachedSystem: boolean; chars: number; maxTokens: number }>;
+  /** Extraction requests (Jarvis step 2): the context block and transcript chunk Claude was sent. */
+  extractRequests: Array<{ model: string; effort: string | null; hasFormat: boolean; betas: string | null; cachedSystem: boolean; context: string; transcript: string }>;
   /** Replace the recording list between runs. */
   setRecordings(recs: MockRecording[]): void;
   /** How the mock Claude answers: "ok" (one real candidate per chunk plus one with impossible timestamps), or "refusal". */
@@ -50,6 +52,7 @@ export function createMockServices(initial: MockRecording[], opts: { pageSize?: 
   const anthropicRequests: MockServices["anthropicRequests"] = [];
   let anthropicMode: "ok" | "refusal" = "ok";
   const rateLimited = new Set<string>();
+  const extractRequests: MockServices["extractRequests"] = [];
 
   const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
@@ -57,6 +60,56 @@ export function createMockServices(initial: MockRecording[], opts: { pageSize?: 
   const findFile = (id: string): { rec: MockRecording; file: MockFile } | null => {
     for (const rec of recordings) for (const file of rec.files) if (file.id === id) return { rec, file };
     return null;
+  };
+
+  // The extractor's mock Claude: one good fact, speaker match and project link built from what it was
+  // offered, plus one of each that the worker's guardrails must drop (invented timestamp, unknown ids,
+  // a label that is not in the recording, a confidence under the floor).
+  const extractReply = (body: { model: string; system?: unknown; messages: Array<{ content: unknown }>; output_config?: { effort?: string; format?: unknown } }, headers: Headers) => {
+    const blocks = (body.messages?.[0]?.content ?? []) as Array<{ text: string }>;
+    const context = blocks[0]?.text ?? "";
+    const transcript = blocks[1]?.text ?? "";
+    extractRequests.push({
+      model: body.model,
+      effort: body.output_config?.effort ?? null,
+      hasFormat: !!body.output_config?.format,
+      betas: headers.get("anthropic-beta"),
+      cachedSystem: Array.isArray(body.system) && !!(body.system[0] as { cache_control?: unknown })?.cache_control,
+      context,
+      transcript,
+    });
+    const usage = { input_tokens: Math.max(1, Math.round((context.length + transcript.length) / 4)), output_tokens: 200, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+    if (anthropicMode === "refusal") {
+      return json({ id: "msg_mock_refusal", type: "message", role: "assistant", model: body.model, content: [], stop_reason: "refusal", stop_sequence: null, stop_details: { type: "refusal", category: "general_harms", explanation: "mock" }, usage });
+    }
+    const section = (title: string) => {
+      const start = context.indexOf(title);
+      if (start < 0) return [] as string[];
+      const rest = context.slice(start + title.length).split("\n").slice(1);
+      const end = rest.findIndex((l) => !l.startsWith("- "));
+      return (end < 0 ? rest : rest.slice(0, end)).filter((l) => !l.includes("(none)") && !l.includes("(no labels)"));
+    };
+    const roster = section("Known people and companies").map((l) => ({ id: Number(l.slice(2).split(" · ")[0]), onRecording: l.includes("on this recording") }));
+    const projects = section("Projects in this workspace").map((l) => Number(l.slice(2).split(" · ")[0]));
+    const unmatched = section("Speaker labels in this recording").filter((l) => l.endsWith(": unmatched")).map((l) => l.slice(2).replace(/ \(\d+ lines\): unmatched$/, ""));
+    const stamps = [...transcript.matchAll(/^\[(\d{2}):(\d{2}):(\d{2})\] (.*)$/gm)].map((m) => ({ sec: Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]), line: m[4] }));
+    const first = stamps[0] ?? { sec: 0, line: "nothing said" };
+    const last = stamps[stamps.length - 1] ?? first;
+    const owner = roster[0]?.id ?? null;
+    const stranger = roster.find((r) => !r.onRecording)?.id;
+    const out = {
+      facts: [
+        { kind: "commitment", text: `Mock: ${first.line.replace(/^[^:]{1,60}: /, "").slice(0, 120)}`, owner_party_id: owner, about_party_id: 999999, project_id: projects[0] ?? null, amount: null, due_date: "2026-11-02", quote_start_sec: first.sec, quote: first.line.slice(0, 80), confidence: 0.9 },
+        { kind: "price", text: "Invented timestamp", owner_party_id: null, about_party_id: null, project_id: null, amount: 1200, due_date: null, quote_start_sec: last.sec + 900, quote: "invented", confidence: 0.95 },
+        { kind: "decision", text: "Too unsure to queue", owner_party_id: null, about_party_id: null, project_id: null, amount: null, due_date: "next week", quote_start_sec: first.sec, quote: "maybe", confidence: 0.3 },
+      ],
+      speakers: [
+        ...(unmatched[0] && stranger ? [{ speaker_label: unmatched[0], party_id: stranger, confidence: 0.85, evidence: "addressed by name" }] : []),
+        { speaker_label: "Nobody In This Recording", party_id: owner ?? 1, confidence: 0.99, evidence: "invented label" },
+      ],
+      projects: [...(projects[0] ? [{ project_id: projects[0], confidence: 0.8, evidence: "the whole call is about it" }] : []), { project_id: 999999, confidence: 0.99, evidence: "not offered" }],
+    };
+    return json({ id: `msg_mock_extract_${calls.anthropic}`, type: "message", role: "assistant", model: body.model, content: [{ type: "text", text: JSON.stringify(out) }], stop_reason: "end_turn", stop_sequence: null, usage });
   };
 
   const fetchImpl: typeof fetch = async (input, init) => {
@@ -157,6 +210,8 @@ export function createMockServices(initial: MockRecording[], opts: { pageSize?: 
         messages: Array<{ role: string; content: string }>;
         output_config?: { effort?: string; format?: unknown };
       };
+      const systemText = Array.isArray(body.system) ? body.system.map((b) => b.text).join("\n") : String(body.system ?? "");
+      if (systemText.includes("relationship records should remember")) return extractReply(body, headers);
       const text = String(body.messages?.[0]?.content ?? "");
       anthropicRequests.push({
         model: body.model,
@@ -222,6 +277,7 @@ export function createMockServices(initial: MockRecording[], opts: { pageSize?: 
     calls,
     groqRequests,
     anthropicRequests,
+    extractRequests,
     setRecordings(recs) {
       recordings = recs;
     },

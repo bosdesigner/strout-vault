@@ -225,6 +225,7 @@ export interface ReviewItem {
   decidedAt: string | null;
   interaction: { id: number; title: string | null; occurredAt: string | null; workspaceId: string | null } | null;
   party: { id: number; name: string } | null;
+  project: { id: number; name: string } | null;
   speakerLabel: string | null;
   startSec: number | null;
   confidence: number | null;

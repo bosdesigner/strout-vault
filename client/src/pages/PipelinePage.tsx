@@ -38,7 +38,8 @@ interface Overview {
     queue: { queued: number; transcribing: number; failed: number; ready: number };
     downloads: { pending: number; failed: number };
     missingOffsite: { total: number; items: Array<{ id: number; title: string | null; occurredAt: string | null; source: string | null }> };
-    spend: { month: string; groqUsd: number };
+    spend: { month: string; groqUsd: number; extractUsd?: number };
+    extraction?: { unread: number; read: number; failed: number; openProposals: number };
   };
   lastRuns: Run[];
   failed: Item[];
@@ -52,6 +53,10 @@ interface Overview {
     archiveStorage: string;
     archiveBucket: string | null;
     overlapMonths: number;
+    extractConfigured?: boolean;
+    extractModel?: string;
+    extractBudgetUsd?: number;
+    extractWorkspaces?: string;
   };
   state: { zoomCursor: string | null; lastRun: { id: number; ok: boolean; finishedAt: string } | null };
   embeddings: {
@@ -172,6 +177,27 @@ export default function PipelinePage() {
                   : "off: search is keyword-only"}
             </p>
             <p className="text-xs text-muted-foreground">New transcripts are embedded by the hourly worker; the backlog by <code>npm run embed:backfill</code>. Agents search them at <Link to="/agents" className="underline">Agents &amp; API</Link>.</p>
+          </Card>
+        </section>
+      )}
+
+      {d.report.extraction && (
+        <section aria-label="Extraction" className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Card title="Extraction">
+            <p className="text-lg font-medium" data-testid="extraction-counts">
+              {d.report.extraction.read} read · {d.report.extraction.unread} waiting
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {d.report.extraction.failed} failed · <Link to="/review" className="underline">{d.report.extraction.openProposals} proposal(s) to review</Link>
+            </p>
+          </Card>
+          <Card title="Extraction settings">
+            <p className="text-sm">
+              {d.config.extractConfigured
+                ? `${d.config.extractModel} · $${(d.report.spend.extractUsd ?? 0).toFixed(2)} of $${(d.config.extractBudgetUsd ?? 0).toFixed(2)} this month`
+                : "off: set EXTRACT_MONTHLY_BUDGET_USD on the worker"}
+            </p>
+            <p className="text-xs text-muted-foreground">Claude reads each filed recording once ({d.config.extractWorkspaces === "*" || !d.config.extractWorkspaces ? "every workspace but phalanx" : d.config.extractWorkspaces}) and queues facts, speaker matches and project links here for review.</p>
           </Card>
         </section>
       )}

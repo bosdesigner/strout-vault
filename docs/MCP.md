@@ -213,7 +213,8 @@ db/migrations/0006_mcp.sql
 
 ## Out of scope for this step
 
-The extraction job that fills `facts` and `review_queue`; applying MCP proposals automatically on
-approval (the Review page marks them approved; only `participant_match` is applied today); action
+The extraction job that fills `facts` and `review_queue`, and applying approved proposals, shipped as
+step 2 ([EXTRACTION.md](EXTRACTION.md)): approving a `propose_update` proposal on the Review page now
+writes it. Still out of scope: action
 tools (Gmail drafts, calendar, AnotherStoryBLDR writes); contractor-facing access (only the owner can
 mint tokens or consent).

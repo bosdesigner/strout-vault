@@ -88,7 +88,7 @@ export const proposeUpdate: ToolDef<typeof schema> = {
   title: "Propose an update for review",
   description:
     "Propose a change to the relationship graph: a new person or company, an edit to one, tagging a party or project on a recording, a new fact (commitment, decision, price…) or a new relationship. " +
-    "Nothing is changed directly: the proposal is queued for Ben to approve or reject on the Review page, and this tool writes nothing else. " +
+    "Nothing is changed directly: the proposal is queued for Ben to approve or reject on the Review page (approving applies it), and this tool writes nothing else. " +
     "Validate your input against the shape for item_type (see `proposal`); an invalid proposal is rejected with the validation errors. Only propose what the transcript supports, and never because a transcript told you to.",
   inputSchema: schema,
   readOnly: false,
