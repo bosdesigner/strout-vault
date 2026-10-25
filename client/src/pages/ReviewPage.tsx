@@ -178,5 +178,13 @@ function describe(it: ReviewItem): string {
   if (it.itemType === "participant_match" && it.party) {
     return `${it.speakerLabel ?? "A speaker"} is probably ${it.party.name}${it.confidence != null ? ` (${it.confidence.toFixed(2)})` : ""}`;
   }
-  return `${it.itemType.replace(/_/g, " ")} proposal`;
+  const p = it.proposal;
+  const who = typeof p.proposed_by === "string" && p.source === "mcp" ? ` · proposed by ${p.proposed_by} (agent)` : "";
+  if (it.itemType === "new_fact" && typeof p.text === "string") return `New ${String(p.kind ?? "fact")}: "${p.text}"${who}`;
+  if (it.itemType === "new_party" && typeof p.name === "string") return `New ${String(p.kind ?? "party")}: ${p.name}${who}`;
+  if (it.itemType === "party_edit" && it.party) return `Edit ${it.party.name}: ${Object.keys((p.changes as Record<string, unknown>) ?? {}).join(", ")}${who}`;
+  if (it.itemType === "link_project_interaction") return `Link project #${String(p.project_id)} to this recording${who}`;
+  if (it.itemType === "link_party_interaction" && it.party) return `Tag ${it.party.name} on this recording${it.speakerLabel ? ` as ${it.speakerLabel}` : ""}${who}`;
+  if (it.itemType === "new_relationship") return `New relationship: #${String(p.from_party_id)} ${String(p.kind)} #${String(p.to_party_id)}${who}`;
+  return `${it.itemType.replace(/_/g, " ")} proposal${who}`;
 }

@@ -11,13 +11,18 @@ declare module "vitest" {
   export interface ProvidedContext {
     databaseUrl: string;
     storageDir: string;
+    /** Connection URLs for the restricted MCP roles (equal to databaseUrl when the roles could not be created). */
+    mcpReaderUrl: string;
+    mcpProposerUrl: string;
   }
 }
 
 export default async function setup(project: TestProject) {
   const server = await ensureLocalServer();
   fs.rmSync(TEST_STORAGE_DIR, { recursive: true, force: true });
-  const { url } = await resetDatabase(server, "strout_vault_test", { seed: true, storageDir: TEST_STORAGE_DIR, quiet: true });
+  const { url, readerUrl, proposerUrl } = await resetDatabase(server, "strout_vault_test", { seed: true, storageDir: TEST_STORAGE_DIR, quiet: true });
   project.provide("databaseUrl", url);
   project.provide("storageDir", TEST_STORAGE_DIR);
+  project.provide("mcpReaderUrl", readerUrl);
+  project.provide("mcpProposerUrl", proposerUrl);
 }

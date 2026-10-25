@@ -6,13 +6,14 @@ import os from "node:os";
 import type { WorkerContext } from "./context.ts";
 import { syncZoom, type SyncSummary } from "./sync.ts";
 import { processTranscriptions, type TranscribeSummary } from "./transcribe.ts";
+import { processEmbeddings, type EmbedSummary } from "./embed.ts";
 import { processScouting, type ScoutSummary } from "./scout.ts";
 import { processCuts, type CutSummary } from "./cut.ts";
 import { buildReport, type PipelineReport } from "./report.ts";
 import { setState } from "./sync.ts";
 
-export type Step = "zoom" | "transcribe" | "scout" | "cut" | "report";
-export const ALL_STEPS: Step[] = ["zoom", "transcribe", "scout", "cut", "report"];
+export type Step = "zoom" | "transcribe" | "embed" | "scout" | "cut" | "report";
+export const ALL_STEPS: Step[] = ["zoom", "transcribe", "embed", "scout", "cut", "report"];
 
 export interface RunOptions {
   trigger?: "schedule" | "manual" | "test";
@@ -23,6 +24,7 @@ export interface RunOptions {
 export interface RunSummary {
   zoom?: SyncSummary;
   transcribe?: TranscribeSummary;
+  embed?: EmbedSummary;
   scout?: ScoutSummary;
   cut?: CutSummary;
   report?: PipelineReport;
@@ -47,6 +49,8 @@ export interface WorkerConfigSnapshot {
   scoutBudgetUsd?: number;
   clipFormat?: string;
   clipCaptions?: boolean;
+  embeddingProvider?: string;
+  embeddingModel?: string | null;
 }
 
 export function configSnapshot(ctx: WorkerContext): WorkerConfigSnapshot {
@@ -65,6 +69,8 @@ export function configSnapshot(ctx: WorkerContext): WorkerConfigSnapshot {
     scoutBudgetUsd: c.ANTHROPIC_API_KEY ? c.SCOUT_MONTHLY_BUDGET_USD : 0,
     clipFormat: c.CLIP_FORMAT,
     clipCaptions: c.CLIP_CAPTIONS === "1",
+    embeddingProvider: c.EMBEDDING_PROVIDER,
+    embeddingModel: c.EMBEDDING_PROVIDER === "off" ? null : c.EMBEDDING_MODEL ?? (c.EMBEDDING_PROVIDER === "voyage" ? "voyage-3.5" : c.EMBEDDING_PROVIDER === "openai" ? "text-embedding-3-small" : "fake-hash-1024"),
   };
 }
 
@@ -110,6 +116,7 @@ export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Prom
       try {
         if (step === "zoom") summary.zoom = await syncZoom(ctx, { dryRun: opts.dryRun });
         else if (step === "transcribe" && !opts.dryRun) summary.transcribe = await processTranscriptions(ctx);
+        else if (step === "embed" && !opts.dryRun) summary.embed = await processEmbeddings(ctx);
         else if (step === "scout" && !opts.dryRun) summary.scout = await processScouting(ctx);
         else if (step === "cut" && !opts.dryRun) summary.cut = await processCuts(ctx);
         else if (step === "report") summary.report = await buildReport(ctx.pool, ctx.now());
@@ -154,6 +161,14 @@ export function formatRunSummary(s: RunSummary): string {
       `transcribe: ${t.done}/${t.candidates} done (zoom transcript ${t.viaZoomTranscript}, captions ${t.viaZoomCaptions}, groq ${t.viaGroq}), ${t.waitingOnBudget} waiting on budget, ${t.failed} failed, $${t.spentUsd.toFixed(3)} spent${t.stoppedEarly ? `; stopped early: ${t.stoppedEarly}` : ""}`,
     );
   }
+  if (s.embed) {
+    const e = s.embed;
+    lines.push(
+      e.configured
+        ? `embed: ${e.done}/${e.candidates} recording(s) embedded into ${e.chunks} chunk(s) (~${e.tokens} tokens, ~$${e.estimatedUsd.toFixed(3)} on ${e.provider} ${e.model}), ${e.failed} failed${e.stoppedEarly ? `; stopped early: ${e.stoppedEarly}` : ""}`
+        : `embed: off${e.candidates ? ` (${e.candidates} recording(s) waiting)` : ""}`,
+    );
+  }
   if (s.scout) {
     const c = s.scout;
     lines.push(
@@ -173,7 +188,7 @@ export function formatRunSummary(s: RunSummary): string {
     );
   }
   // Per-item errors from each step, a few of them: the full lists live in the run's summary JSON.
-  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
+  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.embed?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
   if (itemErrors.length) {
     const shown = itemErrors.slice(0, 3);
     lines.push(`errors: ${shown.join(" | ")}${itemErrors.length > shown.length ? ` | …and ${itemErrors.length - shown.length} more` : ""}`);

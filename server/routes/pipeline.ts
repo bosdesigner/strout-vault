@@ -4,6 +4,7 @@ import type { AppContext } from "../context.ts";
 import { buildReport } from "../worker/report.ts";
 import { formatRunSummary, type RunSummary } from "../worker/run.ts";
 import { HttpError, parse, wrap } from "./util.ts";
+import { embeddingStatus } from "../embeddings/pipeline.ts";
 
 /** Owner-only: what the hourly worker did, what is waiting, and a Retry button. */
 export function pipelineRouter(ctx: AppContext): Router {
@@ -13,7 +14,7 @@ export function pipelineRouter(ctx: AppContext): Router {
     "/",
     wrap(async (_req, res) => {
       const now = new Date();
-      const [report, runs, failed, waiting, state] = await Promise.all([
+      const [report, runs, failed, waiting, state, embeddings] = await Promise.all([
         buildReport(ctx.pool, now),
         ctx.pool.query(`select id, started_at, finished_at, ok, trigger, host, summary, error from worker_runs order by started_at desc limit 8`),
         ctx.pool.query(
@@ -30,6 +31,7 @@ export function pipelineRouter(ctx: AppContext): Router {
             order by i.occurred_at desc nulls last limit 50`,
         ),
         ctx.pool.query(`select key, value, updated_at from worker_state where key in ('zoom_cursor_month', 'last_run')`),
+        embeddingStatus(ctx.pool).catch(() => null),
       ]);
       const c = ctx.config;
       const stateMap = Object.fromEntries((state.rows as Array<{ key: string; value: unknown }>).map((s) => [s.key, s.value]));
@@ -83,6 +85,9 @@ export function pipelineRouter(ctx: AppContext): Router {
           overlapMonths: c.ZOOM_SYNC_OVERLAP_MONTHS,
         },
         configSource: workerConfig ? "worker" : "web",
+        embeddings: embeddings
+          ? { ...embeddings, provider: ctx.mcp?.embeddings ? { name: ctx.mcp.embeddings.name, model: ctx.mcp.embeddings.model } : null, workerProvider: workerConfig?.embeddingProvider ?? null }
+          : null,
         state: {
           zoomCursor: (stateMap.zoom_cursor_month as { month?: string } | undefined)?.month ?? null,
           lastRun: stateMap.last_run ?? null,

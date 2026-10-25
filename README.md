@@ -45,6 +45,8 @@ Open the **Secrets** tab and add each of these (names must match exactly):
 | `ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET` | (Phase 4, worker) The Zoom Server-to-Server OAuth app meeting-vault already uses, with its read-only scopes (`recording:read:admin`, `user:read:admin`). Without them the worker skips Zoom. |
 | `GROQ_API_KEY`, `GROQ_MONTHLY_BUDGET_USD` | (Phase 4, worker, optional) Groq Whisper for recordings that have no Zoom transcript, about $0.04 per audio hour. Nothing is sent unless **both** are set; the budget is enforced from `spend_ledger`. |
 | `ANTHROPIC_API_KEY`, `SCOUT_MONTHLY_BUDGET_USD` | (Phase 5, worker, optional) Claude reads new transcripts for clip-worthy moments, about 5 cents per transcript hour on Opus 5.5. Nothing is sent unless **both** are set; the budget is enforced from `spend_ledger`. |
+| `MCP_READER_DATABASE_URL`, `MCP_PROPOSER_DATABASE_URL` | (MCP) Connection strings of the Neon roles `mcp_reader` and `mcp_proposer` (see "MCP roles" below). Required for `/mcp` in production; it answers 503 without them and nothing else changes. |
+| `EMBEDDING_PROVIDER`, `VOYAGE_API_KEY` | (MCP, semantic search) `voyage` + a Voyage AI key embeds new transcripts (worker) and search queries (web app); `off` (default) keeps search keyword-only. Set on both Repls. `OPENAI_API_KEY` with `EMBEDDING_PROVIDER=openai` is the alternative. |
 
 `PORT` is set by Replit itself. Optional tuning variables are listed in [`.env.example`](.env.example).
 
@@ -77,6 +79,10 @@ psql "$DATABASE_URL" -f db/migrations/0003_access_and_calls.sql
 **Phase 4 adds `db/migrations/0004_worker.sql`**: tables `worker_state`, `worker_runs` and `spend_ledger`, plus two bookkeeping columns on `media` (`attempts`, `last_error`). Additive, `if not exists`, safe to re-run. Apply it the same way (or paste it into the Neon SQL editor) before deploying the worker; `/api/health` then reports `v0.4`.
 
 **Phase 5 adds `db/migrations/0005_clips.sql`**: render bookkeeping columns on `clip_candidates` (`approved_at`, `rendered_at`, `render_attempts`, `render_error`) and `interactions.scout_error`. Additive, `if not exists`, safe to re-run; `/api/health` then reports `v0.5`.
+
+**The MCP server adds `db/migrations/0006_mcp.sql`**: the HNSW and `(interaction_id, seq)` indexes on `chunks`, embedding bookkeeping on `interactions`, the `api_tokens`, `oauth_clients`, `oauth_codes`, `oauth_tokens` and `mcp_audit` tables, and the grants for the two restricted roles. **Create the roles first** (below), then apply; `/api/health` then reports `v0.6`. The HNSW build on ~400k chunks takes a few minutes.
+
+**MCP roles.** The MCP read tools connect as `mcp_reader` (SELECT only) and `propose_update` as `mcp_proposer` (INSERT into `review_queue` only), never as the app role. In the Neon console (Roles & Databases → Add role) create `mcp_reader` and `mcp_proposer` on the production branch, copy each role's pooled connection string into the secrets as `MCP_READER_DATABASE_URL` and `MCP_PROPOSER_DATABASE_URL`, then apply `0006_mcp.sql` as the owner so the grants land (the file skips grants with a NOTICE when a role is missing; re-apply after creating it). Details, the Claude.ai connector setup and the embedding backfill are in [`docs/MCP.md`](docs/MCP.md).
 
 ### 4. Click Deploy
 
@@ -126,7 +132,7 @@ npm run dev          # http://localhost:3000  — login: dev@strout.local / vaul
 
 `db:local` recreates the local `strout_vault` database each time. If the `vector` extension is not installed it says so and swaps `vector(1024)` for `real[]` (the app never touches that column). It also installs three short sample videos that play under the local storage driver.
 
-Local development and the tests never touch Neon, B2 or R2: `DATABASE_URL` from `.env` points at the local server and `STORAGE_DRIVER=local` keeps files under `./.data/storage`.
+Local development and the tests never touch Neon, B2 or R2: `DATABASE_URL` from `.env` points at the local server and `STORAGE_DRIVER=local` keeps files under `./.data/storage`. `db:local` also creates the `mcp_reader` / `mcp_proposer` roles locally and sets `EMBEDDING_PROVIDER=fake` in `.env`, so the MCP server and hybrid search work offline. `docker-compose.yml` starts a `pgvector/pgvector:pg17` Postgres on the same port if you would rather not run one yourself.
 
 Useful scripts:
 
@@ -140,6 +146,9 @@ Useful scripts:
 | `npm run screenshots` | Every page at 1440 px and 390 px into `docs/screenshots/phase-1/` (needs `npm run dev` running); `SCREENSHOT_PHASE=phase-2` / `phase-3` for the later pages (Phase 3 needs the dev server started with `EXPOSE_TEST_MAIL=1`) |
 | `npm run db:bench` | 400k generated segments + `EXPLAIN ANALYZE` of the search query into `docs/search-explain-analyze.md` |
 | `npm run hash-password` | bcrypt hash for `ADMIN_PASSWORD_HASH` |
+| `npm run embed:backfill -- --dry-run` | Count, chunk and price the embedding backlog; drop `--dry-run` (and add `--yes` off localhost) to embed it |
+| `npm run mcp:semantic-check` | Embed the local seed and run the five-query semantic quality check into `docs/mcp-verification/semantic-check.md` |
+| `scripts/mcp-inspector-transcripts.sh` | Call every MCP tool through the MCP Inspector against a running vault and save the transcripts |
 
 ---
 
@@ -158,6 +167,8 @@ server/            Express 5 API (TypeScript, ESM)
   worker/          `npm run worker`: Zoom sync (zoom.ts, sync.ts), transcription
                    (vtt.ts, groq.ts, media.ts, transcribe.ts), clip scouting (scout.ts) and
                    rendering (cut.ts, captions.ts), budgets, report, run lock
+  embeddings/      chunker, EmbeddingProvider (voyage | openai | fake), chunk + embed pipeline
+  mcp/             the MCP server: /mcp, OAuth 2.1 + consent, tokens, scope, audit, tools/
   db/schema.ts     hand-written Drizzle schema matching db/migrations exactly
 client/            React 18 + Vite + Tailwind + shadcn-style components
 shared/            types and text helpers used by both sides
@@ -194,3 +205,4 @@ tests/             unit + API (Vitest), end-to-end (Playwright)
 - [x] Phase 3 — contractor access and call capture ([verification](docs/phase-3-verification.md), [screenshots](docs/screenshots/phase-3/)); migration `0003` must be applied first
 - [x] Phase 4 — the worker: Zoom sync, transcription, upload queue, Pipeline page ([verification](docs/phase-4-verification.md), [screenshots](docs/screenshots/phase-4/)); migration `0004` must be applied first, then deploy the worker (step 6 above)
 - [x] Phase 5 — clips: Claude scouting, review at `/clips`, ffmpeg rendering into R2 with downloads ([verification](docs/phase-5-verification.md), [screenshots](docs/screenshots/phase-5/)); migration `0005` must be applied first; scouting starts when `ANTHROPIC_API_KEY` and `SCOUT_MONTHLY_BUDGET_USD` are set on the worker
+- [x] MCP server + semantic search (Jarvis step 1) — `/mcp` with personal tokens and OAuth for Claude.ai, seven workspace-scoped tools, chunk + embedding pipeline and backfill, Agents & API page ([docs/MCP.md](docs/MCP.md), [verification](docs/mcp-verification/)); create the Neon roles, apply migration `0006`, set `EMBEDDING_PROVIDER` + key, run the backfill
