@@ -51,17 +51,20 @@ recorded conversation since the latest submission.
 ## Turning it on
 
 1. Apply `db/migrations/0008_leads.sql` in the vault's Neon SQL Editor (after 0007).
-2. **A read-only role on AnotherStoryBLDR's database.** In the Neon console, open project
-   `anotherstorybldr`, branch `main`, then SQL Editor, and run this with a password you generate:
+2. **A read-only role on AnotherStoryBLDR's database.** This is done: `vault_ro` was created on
+   2026-10-25 in project `anotherstorybldr` (branch `main`). It can log in and SELECT on `public.leads`
+   and `public.site_leads` only, with no role memberships. To recreate it, run this in the SQL Editor,
+   **not** through the console's Roles page or the Neon API. Roles made there join `neon_superuser`,
+   which can write every table.
 
    ```sql
-   create role vault_reader with login password '<a long random password>';
-   grant usage on schema public to vault_reader;
-   grant select on public.leads, public.site_leads to vault_reader;
+   create role vault_ro with login nocreaterole nocreatedb password '<a long random password>';
+   grant usage on schema public to vault_ro;
+   grant select on public.leads, public.site_leads to vault_ro;
    ```
 
-   Then use **Connect** with role `vault_reader` and the pooled connection, and copy the string.
-   It goes into the worker's `LEADS_DATABASE_URL`.
+   The worker's `LEADS_DATABASE_URL` is
+   `postgresql://vault_ro:<password>@ep-lively-rain-b84zr7e9-pooler.c-14.us-east-1.aws.neon.tech/neondb?sslmode=require`.
 3. **An Airtable token.** At https://airtable.com/create/tokens, create a token with the scope
    `data.records:read` and access to the **Client Pipeline** base only. It goes into the worker's `AIRTABLE_TOKEN`.
 4. Pull and redeploy both Repls. Preview in the worker Shell (this reads the sources and writes nothing):
