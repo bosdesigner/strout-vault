@@ -23,6 +23,7 @@ email, edits records or touches another system.
 | `get_party(id \| name \| email \| phone)` | Fuzzy; ambiguous names return `candidates`. Profile, affiliations, roles by workspace, relationships, projects, last 10 interactions, facts about/owned. | – |
 | `get_project(id \| name)` | Project, parties with roles, linked interactions, facts. | – |
 | `list_open_commitments(workspace?, party_id?, due_before?)` | Open facts of kind commitment / task / follow-up with the source moment (`quote_start_sec`). Empty while `facts` is empty. | – |
+| `list_leads(workspace?, lead_type?, since?, needs_follow_up?, query?, limit?)` | Every lead, one entry per person across the platform, the funnel and Airtable: submissions with source, stage and status, the last conversation, open items. `needs_follow_up` is the "not talked to since they came in" list ([LEADS.md](LEADS.md)). | – |
 | `propose_update(item_type, proposal, reason, interaction_id?)` | Validates the proposal (zod, per `item_type`) and inserts one `review_queue` row. The owner approves or rejects it on the Review page. | `review_queue` only |
 
 Every tool enforces the token's workspace scope in SQL (vector queries join `chunks → interactions`
@@ -213,7 +214,8 @@ db/migrations/0006_mcp.sql
 
 ## Out of scope for this step
 
-The extraction job that fills `facts` and `review_queue`; applying MCP proposals automatically on
-approval (the Review page marks them approved; only `participant_match` is applied today); action
+The extraction job that fills `facts` and `review_queue`, and applying approved proposals, shipped as
+step 2 ([EXTRACTION.md](EXTRACTION.md)): approving a `propose_update` proposal on the Review page now
+writes it. Still out of scope: action
 tools (Gmail drafts, calendar, AnotherStoryBLDR writes); contractor-facing access (only the owner can
 mint tokens or consent).

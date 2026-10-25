@@ -187,10 +187,10 @@ describe("bearer auth", () => {
 
 // ------------------------------------------------------------------ tools --
 describe("tools/list", () => {
-  it("advertises the seven v1 tools with descriptions written for an agent", async () => {
+  it("advertises the eight tools with descriptions written for an agent", async () => {
     const client = await connect(tokens.full);
     const { tools } = await client.listTools();
-    expect(tools.map((x) => x.name).sort()).toEqual(["get_interaction", "get_party", "get_project", "list_interactions", "list_open_commitments", "propose_update", "search_conversations"]);
+    expect(tools.map((x) => x.name).sort()).toEqual(["get_interaction", "get_party", "get_project", "list_interactions", "list_leads", "list_open_commitments", "propose_update", "search_conversations"]);
     for (const tool of tools) {
       expect(tool.description!.length).toBeGreaterThan(80);
       expect(tool.inputSchema.type).toBe("object");
@@ -630,7 +630,7 @@ describe("audit log and rate limit", () => {
     expect(status.status).toBe(200);
     expect(status.body).toMatchObject({ enabled: true, oauthEnabled: true, endpoint: `${BASE}/mcp`, rateLimitPerMin: 60, rolesConfigured: { reader: urls.mcpRoles, proposer: urls.mcpRoles } });
     expect(status.body.embeddings.embedded).toBeGreaterThan(30);
-    expect(status.body.tools).toHaveLength(7);
+    expect(status.body.tools).toHaveLength(8);
     await client.close();
   });
 

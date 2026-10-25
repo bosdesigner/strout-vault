@@ -13,6 +13,7 @@ import PeoplePage from "@/pages/PeoplePage";
 import ProjectsPage from "@/pages/ProjectsPage";
 import ProjectPage from "@/pages/ProjectPage";
 import ReviewPage from "@/pages/ReviewPage";
+import LeadsPage from "@/pages/LeadsPage";
 import AccessPage from "@/pages/AccessPage";
 import PipelinePage from "@/pages/PipelinePage";
 import ClipsPage from "@/pages/ClipsPage";
@@ -68,6 +69,7 @@ export default function App() {
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/projects/:id" element={<ProjectPage />} />
         <Route path="/review" element={<ReviewPage />} />
+        <Route path="/leads" element={<LeadsPage />} />
         <Route path="/access" element={<AccessPage />} />
         <Route path="/pipeline" element={<PipelinePage />} />
         <Route path="/clips" element={<ClipsPage />} />

@@ -1,4 +1,4 @@
-// One worker run: lock, Zoom sync, transcription, report. Called hourly by
+// One worker run: lock, Zoom sync, transcription, embedding, extraction, clips, report. Called hourly by
 // the Replit Scheduled Deployment (`npm run worker`), in a loop on a VM, or
 // directly from tests.
 
@@ -8,12 +8,15 @@ import { syncZoom, type SyncSummary } from "./sync.ts";
 import { processTranscriptions, type TranscribeSummary } from "./transcribe.ts";
 import { processEmbeddings, type EmbedSummary } from "./embed.ts";
 import { processScouting, type ScoutSummary } from "./scout.ts";
+import { processExtraction, type ExtractSummary } from "./extract.ts";
+import { processLeads } from "./leads.ts";
+import type { LeadSyncSummary } from "../leads/sync.ts";
 import { processCuts, type CutSummary } from "./cut.ts";
 import { buildReport, type PipelineReport } from "./report.ts";
 import { setState } from "./sync.ts";
 
-export type Step = "zoom" | "transcribe" | "embed" | "scout" | "cut" | "report";
-export const ALL_STEPS: Step[] = ["zoom", "transcribe", "embed", "scout", "cut", "report"];
+export type Step = "zoom" | "leads" | "transcribe" | "embed" | "extract" | "scout" | "cut" | "report";
+export const ALL_STEPS: Step[] = ["zoom", "leads", "transcribe", "embed", "extract", "scout", "cut", "report"];
 
 export interface RunOptions {
   trigger?: "schedule" | "manual" | "test";
@@ -23,8 +26,10 @@ export interface RunOptions {
 
 export interface RunSummary {
   zoom?: SyncSummary;
+  leads?: LeadSyncSummary;
   transcribe?: TranscribeSummary;
   embed?: EmbedSummary;
+  extract?: ExtractSummary;
   scout?: ScoutSummary;
   cut?: CutSummary;
   report?: PipelineReport;
@@ -51,6 +56,12 @@ export interface WorkerConfigSnapshot {
   clipCaptions?: boolean;
   embeddingProvider?: string;
   embeddingModel?: string | null;
+  extractConfigured?: boolean;
+  extractModel?: string;
+  extractBudgetUsd?: number;
+  extractWorkspaces?: string;
+  leadsPlatform?: boolean;
+  leadsAirtable?: boolean;
 }
 
 export function configSnapshot(ctx: WorkerContext): WorkerConfigSnapshot {
@@ -69,6 +80,12 @@ export function configSnapshot(ctx: WorkerContext): WorkerConfigSnapshot {
     scoutBudgetUsd: c.ANTHROPIC_API_KEY ? c.SCOUT_MONTHLY_BUDGET_USD : 0,
     clipFormat: c.CLIP_FORMAT,
     clipCaptions: c.CLIP_CAPTIONS === "1",
+    extractConfigured: !!c.ANTHROPIC_API_KEY && c.EXTRACT_MONTHLY_BUDGET_USD > 0,
+    extractModel: c.EXTRACT_MODEL,
+    extractBudgetUsd: c.ANTHROPIC_API_KEY ? c.EXTRACT_MONTHLY_BUDGET_USD : 0,
+    extractWorkspaces: c.EXTRACT_WORKSPACES,
+    leadsPlatform: !!c.LEADS_DATABASE_URL,
+    leadsAirtable: !!c.AIRTABLE_TOKEN,
     embeddingProvider: c.EMBEDDING_PROVIDER,
     embeddingModel: c.EMBEDDING_PROVIDER === "off" ? null : c.EMBEDDING_MODEL ?? (c.EMBEDDING_PROVIDER === "voyage" ? "voyage-3.5" : c.EMBEDDING_PROVIDER === "openai" ? "text-embedding-3-small" : "fake-hash-1024"),
   };
@@ -115,8 +132,10 @@ export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Prom
     for (const step of steps) {
       try {
         if (step === "zoom") summary.zoom = await syncZoom(ctx, { dryRun: opts.dryRun });
+        else if (step === "leads") summary.leads = await processLeads(ctx, { dryRun: opts.dryRun });
         else if (step === "transcribe" && !opts.dryRun) summary.transcribe = await processTranscriptions(ctx);
         else if (step === "embed" && !opts.dryRun) summary.embed = await processEmbeddings(ctx);
+        else if (step === "extract" && !opts.dryRun) summary.extract = await processExtraction(ctx);
         else if (step === "scout" && !opts.dryRun) summary.scout = await processScouting(ctx);
         else if (step === "cut" && !opts.dryRun) summary.cut = await processCuts(ctx);
         else if (step === "report") summary.report = await buildReport(ctx.pool, ctx.now());
@@ -155,6 +174,15 @@ export function formatRunSummary(s: RunSummary): string {
         : "zoom: not configured",
     );
   }
+  if (s.leads) {
+    const l = s.leads;
+    const srcs = Object.entries(l.sources).filter(([, v]) => v.configured);
+    lines.push(
+      srcs.length
+        ? `leads: ${srcs.map(([k, v]) => `${k} ${v.error ? "FAILED" : v.read}`).join(", ")}; ${l.leads} lead(s), ${l.newLeads} new, ${l.partiesCreated} new part(ies), ${l.partiesMatched} matched, ${l.callLinksQueued} call link(s) queued${l.dryRun ? " (dry run, nothing written)" : ""}`
+        : "leads: off (no source configured)",
+    );
+  }
   if (s.transcribe) {
     const t = s.transcribe;
     lines.push(
@@ -167,6 +195,14 @@ export function formatRunSummary(s: RunSummary): string {
       e.configured
         ? `embed: ${e.done}/${e.candidates} recording(s) embedded into ${e.chunks} chunk(s) (~${e.tokens} tokens, ~$${e.estimatedUsd.toFixed(3)} on ${e.provider} ${e.model}), ${e.failed} failed${e.stoppedEarly ? `; stopped early: ${e.stoppedEarly}` : ""}`
         : `embed: off${e.candidates ? ` (${e.candidates} recording(s) waiting)` : ""}`,
+    );
+  }
+  if (s.extract) {
+    const x = s.extract;
+    lines.push(
+      x.configured
+        ? `extract: ${x.read}/${x.candidatesRecordings} recording(s) read, queued ${x.queued.facts} fact(s), ${x.queued.speakers} speaker match(es), ${x.queued.projects} project link(s); ${x.waitingOnBudget} waiting on budget, ${x.failed} failed, $${x.spentUsd.toFixed(3)} spent${x.stoppedEarly ? `; stopped early: ${x.stoppedEarly}` : ""}`
+        : `extract: off${x.candidatesRecordings ? ` (${x.candidatesRecordings} recording(s) waiting)` : ""}`,
     );
   }
   if (s.scout) {
@@ -188,7 +224,7 @@ export function formatRunSummary(s: RunSummary): string {
     );
   }
   // Per-item errors from each step, a few of them: the full lists live in the run's summary JSON.
-  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.embed?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
+  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.leads?.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.embed?.errors ?? []), ...(s.extract?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
   if (itemErrors.length) {
     const shown = itemErrors.slice(0, 3);
     lines.push(`errors: ${shown.join(" | ")}${itemErrors.length > shown.length ? ` | …and ${itemErrors.length - shown.length} more` : ""}`);
