@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import type { AppContext } from "../context.ts";
-import { countOpenReview, decideReview, listReview, ReviewError } from "../services/review.ts";
+import { countOpenReview, decideReview, decideReviewBulk, listReview, ReviewError } from "../services/review.ts";
 import { intId, parse, wrap } from "./util.ts";
 
 export function reviewRouter(ctx: AppContext): Router {
@@ -21,6 +21,15 @@ export function reviewRouter(ctx: AppContext): Router {
     "/count",
     wrap(async (req, res) => {
       res.json({ openCount: await countOpenReview(ctx.pool, typeof req.query.workspace === "string" ? req.query.workspace : null) });
+    }),
+  );
+  // Approve or reject many items at once (the Review page's "Approve all workspace proposals").
+  r.post(
+    "/bulk",
+    wrap(async (req, res) => {
+      const body = parse(z.object({ ids: z.array(z.coerce.number().int().positive()).min(1).max(500), decision: z.enum(["approve", "reject"]) }), req.body);
+      const out = await decideReviewBulk(ctx.pool, body.ids, body.decision);
+      res.json({ ...out, openCount: await countOpenReview(ctx.pool, null) });
     }),
   );
   r.post(

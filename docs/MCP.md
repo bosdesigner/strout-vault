@@ -53,7 +53,15 @@ Two kinds of bearer token, both hashed at rest (SHA-256), both checked on every 
 **Workspace scope.** Every token carries a list of workspace ids, or `*`. New personal tokens default to
 no workspaces until you pick some. `*` means every workspace **except `phalanx`** (investor material):
 it is only included when ticked explicitly (`["*", "phalanx"]`). On the OAuth consent screen phalanx is
-unticked by default. Recordings without a `workspace_id` are never in scope.
+unticked by default.
+
+**Unassigned recordings.** Recordings whose `workspace_id` is null (every recording the Zoom sync
+imported, until it is filed) are a second explicit option, `unassigned`: a token or connector sees them
+only when that box is ticked, and `*` never implies it, because an unfiled recording can be about any
+venture. Tools accept `workspace: "unassigned"` to filter to them. To file them, run the workspace
+proposer (`npm run workspaces:propose`, dry run; `--apply` queues one review item per recording) and
+approve on the Review page, where **Approve all workspace proposals** handles a page at a time. Approval
+writes `interactions.workspace_id`; the proposer never does. Rules live in `server/workspaces/rules.ts`.
 
 **Rate limit.** 60 tool calls per minute per token (`MCP_RATE_LIMIT_PER_MIN`); the 61st returns a
 `rate_limited` error with `retry_after_sec`. Counted per process.
@@ -198,7 +206,8 @@ server/embeddings/    provider interface, voyage/openai/fake, chunker, pipeline 
 server/worker/embed.ts   the worker's embed step
 server/routes/mcpAdmin.ts   /api/mcp: tokens, clients, audit, status (owner only)
 client/src/pages/AgentsPage.tsx   Agents & API: tokens, connected apps, audit log
-scripts/backfill-embeddings.ts, scripts/semantic-check.ts, scripts/mcp-inspector-transcripts.sh
+server/workspaces/       rules, classifier and proposer for filing unfiled recordings (review-queue proposals)
+scripts/backfill-embeddings.ts, scripts/semantic-check.ts, scripts/propose-workspaces.ts, scripts/mcp-inspector-transcripts.sh
 db/migrations/0006_mcp.sql
 ```
 

@@ -7,7 +7,7 @@ import { Router, urlencoded, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
 import type { AppContext } from "../../context.ts";
 import { newSession, setSessionCookie } from "../../auth/session.ts";
-import { RESTRICTED_WORKSPACES, parseStoredScope } from "../scope.ts";
+import { RESTRICTED_WORKSPACES, UNASSIGNED, parseStoredScope } from "../scope.ts";
 import { verifyPending, type PendingAuthorization, type VaultOAuthProvider } from "./oauth.ts";
 
 const esc = (s: unknown) =>
@@ -86,6 +86,7 @@ export function consentRouter(ctx: AppContext, provider: VaultOAuthProvider): Ro
       return;
     }
     const { rows } = await ctx.pool.query(`select id, name, notes from workspaces order by name`);
+    const unassignedCount = Number((await ctx.pool.query(`select count(*)::int as n from interactions where workspace_id is null`)).rows[0].n);
     const restricted = new Set<string>(RESTRICTED_WORKSPACES);
     const redirectHost = (() => {
       try {
@@ -99,7 +100,9 @@ export function consentRouter(ctx: AppContext, provider: VaultOAuthProvider): Ro
         (w) => `<label class="ws${restricted.has(w.id) ? " restricted" : ""}"><input type="checkbox" name="workspace" value="${esc(w.id)}"${restricted.has(w.id) ? "" : " checked"}>
 <span><strong>${esc(w.name)}</strong> <code>${esc(w.id)}</code>${restricted.has(w.id) ? "<small>Investor material: not included unless you tick it.</small>" : w.notes ? `<small>${esc(w.notes)}</small>` : ""}</span></label>`,
       )
-      .join("");
+      .join("") +
+      `<label class="ws restricted"><input type="checkbox" name="workspace" value="${UNASSIGNED}">
+<span><strong>Unassigned recordings</strong> <code>${UNASSIGNED}</code><small>${unassignedCount} recording(s) not filed under a workspace yet. They can be about any venture, so "all workspaces" never includes them.</small></span></label>`;
     res.type("html").send(
       page(
         "Allow access",
@@ -161,7 +164,7 @@ export function consentRouter(ctx: AppContext, provider: VaultOAuthProvider): Ro
     const { rows } = await ctx.pool.query(`select id from workspaces where id = any($1::text[])`, [picked]);
     let scope: string[];
     try {
-      scope = parseStoredScope(rows.map((w) => w.id as string));
+      scope = parseStoredScope([...rows.map((w) => w.id as string), ...(picked.includes(UNASSIGNED) ? [UNASSIGNED] : [])]);
     } catch {
       return errorPage(res, 400, "Unknown workspace selection.");
     }

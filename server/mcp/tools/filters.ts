@@ -1,6 +1,6 @@
 // Shared WHERE-clause builder for interaction lists and searches: scope first, then the
 // optional workspace/party/project/date filters. Every tool that touches interactions uses it.
-import { inScope, scopeSql } from "../scope.ts";
+import { inScope, scopeSql, UNASSIGNED } from "../scope.ts";
 import { ToolError, type ToolContext } from "./types.ts";
 
 export interface InteractionFilters {
@@ -27,7 +27,11 @@ export function interactionWhere(ctx: ToolContext, f: InteractionFilters, alias 
   };
   const conds = [scopeSql(ctx.scope, params, `${alias}.workspace_id`)];
   let outOfScope = false;
-  if (f.workspace) {
+  if (f.workspace === UNASSIGNED) {
+    // Recordings that have no workspace yet; readable only by tokens that list "unassigned".
+    if (!ctx.scope.unassigned) outOfScope = true;
+    conds.push(`${alias}.workspace_id is null`);
+  } else if (f.workspace) {
     if (!inScope(ctx.scope, f.workspace)) outOfScope = true;
     conds.push(`${alias}.workspace_id = ${p(f.workspace)}`);
   }
@@ -46,5 +50,6 @@ export function parseDate(v: string, name: string): string {
 
 /** Scope note for a workspace the token cannot read: say so plainly instead of returning nothing silently. */
 export function outOfScopeNote(ctx: ToolContext, workspace: string): string {
-  return `workspace "${workspace}" is not within this token's scope (${ctx.scope.ids.join(", ") || "no workspaces"}); no results`;
+  const have = [...ctx.scope.ids, ...(ctx.scope.unassigned ? [UNASSIGNED] : [])];
+  return `workspace "${workspace}" is not within this token's scope (${have.join(", ") || "no workspaces"}); no results`;
 }

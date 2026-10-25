@@ -6,7 +6,7 @@ import type { AppContext } from "../context.ts";
 import { createApiToken, listApiTokens, revokeApiToken } from "../mcp/auth/tokens.ts";
 import { listOAuthClients, revokeOAuthClient } from "../mcp/auth/oauth.ts";
 import { listAudit } from "../mcp/audit.ts";
-import { parseStoredScope, RESTRICTED_WORKSPACES } from "../mcp/scope.ts";
+import { parseStoredScope, RESTRICTED_WORKSPACES, UNASSIGNED } from "../mcp/scope.ts";
 import { embeddingStatus } from "../embeddings/pipeline.ts";
 import { TOOLS } from "../mcp/tools/index.ts";
 import { HttpError, intId, parse, wrap } from "./util.ts";
@@ -26,7 +26,8 @@ export function mcpAdminRouter(ctx: AppContext): Router {
           `select (select count(*)::int from api_tokens where revoked_at is null) as tokens,
                   (select count(*)::int from oauth_clients where revoked_at is null) as clients,
                   (select count(*)::int from mcp_audit where created_at > now() - interval '24 hours') as calls_24h,
-                  (select count(*)::int from mcp_audit where created_at > now() - interval '24 hours' and error is not null) as errors_24h`,
+                  (select count(*)::int from mcp_audit where created_at > now() - interval '24 hours' and error is not null) as errors_24h,
+                  (select count(*)::int from interactions where workspace_id is null) as unassigned`,
         ),
       ]);
       res.json({
@@ -40,6 +41,8 @@ export function mcpAdminRouter(ctx: AppContext): Router {
         embeddingsError: m?.embeddingsError ?? null,
         rateLimitPerMin: ctx.config.MCP_RATE_LIMIT_PER_MIN,
         restrictedWorkspaces: RESTRICTED_WORKSPACES,
+        unassignedScope: UNASSIGNED,
+        unassignedRecordings: counts.rows[0].unassigned,
         tools: TOOLS.map((t) => ({ name: t.name, title: t.title, readOnly: t.readOnly })),
         embeddings,
         counts: counts.rows[0],
@@ -64,7 +67,7 @@ export function mcpAdminRouter(ctx: AppContext): Router {
       } catch (err) {
         throw new HttpError(400, (err as Error).message);
       }
-      const explicit = scope.filter((s) => s !== "*");
+      const explicit = scope.filter((s) => s !== "*" && s !== UNASSIGNED);
       if (explicit.length) {
         const { rows } = await ctx.pool.query(`select id from workspaces where id = any($1::text[])`, [explicit]);
         const known = new Set(rows.map((w) => w.id as string));
