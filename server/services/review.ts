@@ -120,6 +120,16 @@ export async function decideReview(pool: pg.Pool, id: number, decision: "approve
           );
           applied.push(`segments.speaker_party_id (${res.rowCount ?? 0} lines)`);
         }
+      } else if (row.item_type === "interaction_workspace") {
+        // Files a recording under a workspace (scripts/propose-workspaces.ts queues these).
+        const interactionId = num(proposal.interaction_id) ?? (row.interaction_id as number | null);
+        const workspaceId = typeof proposal.workspace_id === "string" ? proposal.workspace_id : null;
+        if (!interactionId || !workspaceId) throw new ReviewError(400, "proposal is missing interaction_id or workspace_id");
+        const ws = await client.query(`select 1 from workspaces where id = $1`, [workspaceId]);
+        if (!ws.rowCount) throw new ReviewError(400, `unknown workspace ${workspaceId}`);
+        const res = await client.query(`update interactions set workspace_id = $2, updated_at = now() where id = $1`, [interactionId, workspaceId]);
+        if (!res.rowCount) throw new ReviewError(400, `unknown interaction ${interactionId}`);
+        applied.push(`interactions.workspace_id = ${workspaceId}`);
       }
     }
     const updated = await client.query(
@@ -135,6 +145,20 @@ export async function decideReview(pool: pg.Pool, id: number, decision: "approve
   } finally {
     client.release();
   }
+}
+
+/** Decides several items in order; one failure is recorded and the rest continue. */
+export async function decideReviewBulk(pool: pg.Pool, ids: number[], decision: "approve" | "reject"): Promise<{ done: number; failed: Array<{ id: number; error: string }> }> {
+  const out = { done: 0, failed: [] as Array<{ id: number; error: string }> };
+  for (const id of ids) {
+    try {
+      await decideReview(pool, id, decision);
+      out.done++;
+    } catch (err) {
+      out.failed.push({ id, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return out;
 }
 
 async function listReviewById(pool: pg.Pool, id: number): Promise<ReviewItem | null> {

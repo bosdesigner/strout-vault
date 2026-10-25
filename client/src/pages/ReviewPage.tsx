@@ -45,6 +45,16 @@ export default function ReviewPage() {
     },
   });
 
+  const workspaceItems = items.filter((i) => i.itemType === "interaction_workspace" && i.status === "open");
+  const bulk = useMutation({
+    mutationFn: (ids: number[]) => api<{ done: number; failed: Array<{ id: number; error: string }>; openCount: number }>("/review/bulk", { method: "POST", json: { ids, decision: "approve" } }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["review"] });
+      void qc.invalidateQueries({ queryKey: ["review-count"] });
+      void qc.invalidateQueries({ queryKey: ["library"] });
+    },
+  });
+
   useEffect(() => {
     setSelected((s) => Math.min(s, Math.max(0, items.length - 1)));
   }, [items.length]);
@@ -98,6 +108,19 @@ export default function ReviewPage() {
             Proposals from the pipeline{current ? ` for ${current.name}` : ""}. <kbd className="rounded border px-1">a</kbd> approve · <kbd className="rounded border px-1">r</kbd> reject · <kbd className="rounded border px-1">j</kbd>/<kbd className="rounded border px-1">k</kbd> move · <kbd className="rounded border px-1">o</kbd> open the moment
           </p>
         </div>
+        {workspaceItems.length > 1 && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={bulk.isPending}
+            data-testid="approve-all-workspaces"
+            onClick={() => {
+              if (window.confirm(`Approve all ${workspaceItems.length} workspace proposals shown? Each recording is filed under the proposed workspace.`)) bulk.mutate(workspaceItems.map((i) => i.id));
+            }}
+          >
+            <Check className="h-4 w-4" /> Approve all {workspaceItems.length} workspace proposals
+          </Button>
+        )}
         <div className="inline-flex rounded-lg bg-muted p-1 text-sm" role="tablist" aria-label="Show">
           {(["open", "all"] as Filter[]).map((f) => (
             <button key={f} role="tab" aria-selected={filter === f} type="button" onClick={() => setFilter(f)} className={cn("rounded-md px-3 py-1 capitalize", filter === f && "bg-background shadow-sm")}>
@@ -186,5 +209,6 @@ function describe(it: ReviewItem): string {
   if (it.itemType === "link_project_interaction") return `Link project #${String(p.project_id)} to this recording${who}`;
   if (it.itemType === "link_party_interaction" && it.party) return `Tag ${it.party.name} on this recording${it.speakerLabel ? ` as ${it.speakerLabel}` : ""}${who}`;
   if (it.itemType === "new_relationship") return `New relationship: #${String(p.from_party_id)} ${String(p.kind)} #${String(p.to_party_id)}${who}`;
+  if (it.itemType === "interaction_workspace") return `File under ${String(p.workspace_id)}${typeof p.confidence === "number" ? ` (${Math.round(p.confidence * 100)}% sure)` : ""}`;
   return `${it.itemType.replace(/_/g, " ")} proposal${who}`;
 }

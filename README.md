@@ -148,6 +148,7 @@ Useful scripts:
 | `npm run hash-password` | bcrypt hash for `ADMIN_PASSWORD_HASH` |
 | `npm run embed:backfill -- --dry-run` | Count, chunk and price the embedding backlog; drop `--dry-run` (and add `--yes` off localhost) to embed it |
 | `npm run mcp:semantic-check` | Embed the local seed and run the five-query semantic quality check into `docs/mcp-verification/semantic-check.md` |
+| `npm run workspaces:propose` | Propose a workspace for every recording that has none (dry run; `--apply` queues review items, approval files the recording) |
 | `scripts/mcp-inspector-transcripts.sh` | Call every MCP tool through the MCP Inspector against a running vault and save the transcripts |
 
 ---

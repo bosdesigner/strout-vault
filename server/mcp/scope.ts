@@ -9,11 +9,20 @@ export type StoredScope = string[];
 /** Workspaces that "*" never includes unless they are listed explicitly. */
 export const RESTRICTED_WORKSPACES = ["phalanx"] as const;
 
+/**
+ * Pseudo-workspace for recordings that have no workspace_id yet (the Zoom sync never set one).
+ * Like phalanx it must be listed explicitly: "*" never implies it, because an unassigned recording
+ * could belong to any venture, investor material included.
+ */
+export const UNASSIGNED = "unassigned";
+
 export interface ResolvedScope {
   /** Concrete workspace ids the token may read. Empty means nothing at all. */
   ids: string[];
   /** True when "*" was in the stored scope (shown in the UI; enforcement always uses `ids`). */
   all: boolean;
+  /** True when the token may also read recordings whose workspace_id is null. */
+  unassigned: boolean;
   stored: StoredScope;
 }
 
@@ -33,7 +42,8 @@ export function parseStoredScope(value: unknown): StoredScope {
 /** Expands "*" against the workspaces table, leaving restricted workspaces out unless listed. */
 export async function resolveScope(pool: pg.Pool | pg.PoolClient, stored: StoredScope, knownWorkspaces?: string[]): Promise<ResolvedScope> {
   const all = stored.includes("*");
-  const explicit = stored.filter((s) => s !== "*");
+  const unassigned = stored.includes(UNASSIGNED);
+  const explicit = stored.filter((s) => s !== "*" && s !== UNASSIGNED);
   let ids: string[];
   if (all) {
     const known = knownWorkspaces ?? (await pool.query(`select id from workspaces order by id`)).rows.map((r) => r.id as string);
@@ -42,28 +52,36 @@ export async function resolveScope(pool: pg.Pool | pg.PoolClient, stored: Stored
   } else {
     ids = explicit;
   }
-  return { ids, all, stored };
+  return { ids, all, unassigned, stored };
 }
 
 /**
  * SQL predicate restricting `column` (a workspace_id) to the scope. Appends its parameter
  * to `params`. An empty scope yields "false": a token with no workspaces sees nothing.
- * Rows whose workspace_id is null are never in scope (they cannot be scoped).
+ * Rows whose workspace_id is null are in scope only when the token lists "unassigned".
  */
 export function scopeSql(scope: ResolvedScope, params: unknown[], column = "i.workspace_id"): string {
-  if (!scope.ids.length) return "false";
-  params.push(scope.ids);
-  return `${column} = any($${params.length}::text[])`;
+  const parts: string[] = [];
+  if (scope.ids.length) {
+    params.push(scope.ids);
+    parts.push(`${column} = any($${params.length}::text[])`);
+  }
+  if (scope.unassigned) parts.push(`${column} is null`);
+  if (!parts.length) return "false";
+  return parts.length === 1 ? parts[0] : `(${parts.join(" or ")})`;
 }
 
 export function inScope(scope: ResolvedScope, workspaceId: string | null | undefined): boolean {
-  return !!workspaceId && scope.ids.includes(workspaceId);
+  if (!workspaceId) return scope.unassigned;
+  return scope.ids.includes(workspaceId);
 }
 
 export function describeScope(stored: StoredScope): string {
   if (!stored.length) return "no workspaces";
   const all = stored.includes("*");
-  const extra = stored.filter((s) => s !== "*");
-  if (all) return extra.length ? `all workspaces incl. ${extra.join(", ")}` : `all workspaces except ${RESTRICTED_WORKSPACES.join(", ")}`;
-  return extra.join(", ");
+  const unassigned = stored.includes(UNASSIGNED);
+  const extra = stored.filter((s) => s !== "*" && s !== UNASSIGNED);
+  const tail = unassigned ? " + unassigned recordings" : "";
+  if (all) return (extra.length ? `all workspaces incl. ${extra.join(", ")}` : `all workspaces except ${RESTRICTED_WORKSPACES.join(", ")}`) + tail;
+  return (extra.join(", ") || "no workspaces") + tail;
 }

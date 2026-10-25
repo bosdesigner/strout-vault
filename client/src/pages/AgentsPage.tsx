@@ -25,6 +25,8 @@ interface Status {
   embeddingsError: string | null;
   rateLimitPerMin: number;
   restrictedWorkspaces: string[];
+  unassignedScope: string;
+  unassignedRecordings: number;
   tools: Array<{ name: string; title: string; readOnly: boolean }>;
   embeddings: { embedded: number; pending: number; failed: number; noTranscript: number; chunks: number; lastEmbeddedAt: string | null };
   counts: { tokens: number; clients: number; calls_24h: number; errors_24h: number };
@@ -184,13 +186,15 @@ function StatusCards({ status, loading }: { status: Status | undefined; loading:
   );
 }
 
+const UNASSIGNED = "unassigned";
+
 function ScopeBadges({ scope, restricted }: { scope: string[]; restricted?: string[] }) {
   if (!scope.length) return <Badge variant="destructive">no workspaces</Badge>;
   return (
     <span className="flex flex-wrap gap-1">
       {scope.map((s) => (
-        <Badge key={s} variant={s === "*" ? "default" : restricted?.includes(s) ? "warning" : "secondary"}>
-          {s === "*" ? "all workspaces" : s}
+        <Badge key={s} variant={s === "*" ? "default" : s === UNASSIGNED || restricted?.includes(s) ? "warning" : "secondary"}>
+          {s === "*" ? "all workspaces" : s === UNASSIGNED ? "unassigned recordings" : s}
         </Badge>
       ))}
     </span>
@@ -211,7 +215,7 @@ function TokensTab({ status }: { status: Status | undefined }) {
   const [copied, setCopied] = useState(false);
 
   const scope = useMemo(() => {
-    if (all) return ["*", ...picked.filter((p) => restricted.includes(p))];
+    if (all) return ["*", ...picked.filter((p) => restricted.includes(p) || p === UNASSIGNED)];
     return picked;
   }, [all, picked, restricted]);
 
@@ -337,6 +341,17 @@ function TokensTab({ status }: { status: Status | undefined }) {
                     </li>
                   );
                 })}
+                <li>
+                  <label className="flex items-start gap-2 text-sm">
+                    <Checkbox className="mt-0.5" checked={picked.includes(UNASSIGNED)} onCheckedChange={() => toggle(UNASSIGNED)} data-testid="scope-unassigned" />
+                    <span>
+                      Unassigned recordings <Badge variant="warning">explicit</Badge>
+                      <span className="block text-xs text-muted-foreground">
+                        {status?.unassignedRecordings ?? 0} recording{status?.unassignedRecordings === 1 ? "" : "s"} not filed under a workspace yet. They can be about any venture, so "all workspaces" never includes them.
+                      </span>
+                    </span>
+                  </label>
+                </li>
               </ul>
             </fieldset>
             <div>

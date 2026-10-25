@@ -1,6 +1,6 @@
 // list_open_commitments: open facts of kind commitment / task / follow-up, with their source moment.
 import { z } from "zod";
-import { inScope, scopeSql } from "../scope.ts";
+import { inScope, scopeSql, UNASSIGNED } from "../scope.ts";
 import { parseDate, outOfScopeNote } from "./filters.ts";
 import { limitArg, partyIdArg, workspaceArg } from "./schemas.ts";
 import { clampLimit, dateOnly, deepLink, iso, type ToolDef } from "./types.ts";
@@ -30,13 +30,17 @@ export const listOpenCommitments: ToolDef<typeof schema> = {
       params.push(v);
       return `$${params.length}`;
     };
-    if (args.workspace && !inScope(ctx.scope, args.workspace)) return { result: { count: 0, note: outOfScopeNote(ctx, args.workspace), items: [] }, count: 0 };
+    const wantsUnassigned = args.workspace === UNASSIGNED;
+    if (args.workspace && (wantsUnassigned ? !ctx.scope.unassigned : !inScope(ctx.scope, args.workspace))) {
+      return { result: { count: 0, note: outOfScopeNote(ctx, args.workspace), items: [] }, count: 0 };
+    }
     const conds = [
       `f.kind = any(${p([...COMMITMENT_KINDS])}::text[])`,
       `coalesce(f.status, 'open') = 'open'`,
       scopeSql(ctx.scope, params, "coalesce(f.workspace_id, i.workspace_id)"),
     ];
-    if (args.workspace) conds.push(`coalesce(f.workspace_id, i.workspace_id) = ${p(args.workspace)}`);
+    if (wantsUnassigned) conds.push(`coalesce(f.workspace_id, i.workspace_id) is null`);
+    else if (args.workspace) conds.push(`coalesce(f.workspace_id, i.workspace_id) = ${p(args.workspace)}`);
     if (args.party_id) conds.push(`(f.owner_party_id = ${p(args.party_id)} or f.about_party_id = ${p(args.party_id)})`);
     if (args.due_before) conds.push(`f.due_date <= ${p(parseDate(args.due_before, "due_before"))}::date`);
     const limit = clampLimit(args.limit);
