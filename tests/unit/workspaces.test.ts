@@ -44,9 +44,15 @@ describe("workspace classifier", () => {
     const agree = classifyRecording(base({ title: "Patrick Hill: AnotherStory Assessment", transcriptHits: { another_story: 20 } }));
     expect(agree).toMatchObject({ workspaceId: "another_story", confidence: 0.95 });
     expect(agree!.evidence).toHaveLength(2);
+    // A title match keeps its confidence when only transcript vocabulary points elsewhere…
     const competing = classifyRecording(base({ title: "Matt Wilkes: AnotherStory Intro Consultation", transcriptHits: { strout_arch: 15 } }));
-    expect(competing).toMatchObject({ workspaceId: "another_story", confidence: 0.8 });
+    expect(competing).toMatchObject({ workspaceId: "another_story", confidence: 0.9 });
     expect(competing!.alsoConsidered[0]).toMatch(/^strout_arch/);
+    // …while a transcript-only winner with a weak competitor is marked down.
+    const thin = classifyRecording(base({ title: "Zoom Meeting", transcriptHits: { phalanx: 12 }, peopleInTitle: [] }));
+    expect(thin).toMatchObject({ confidence: 0.75 });
+    const thinner = classifyRecording(base({ title: "Ben and Logan", transcriptHits: { phalanx: 12 }, peopleInTitle: [{ name: "Logan", workspaceId: "another_story", strong: false }] }));
+    expect(thinner).toMatchObject({ workspaceId: "phalanx", confidence: 0.65 });
     const conflict = classifyRecording(base({ title: "Phalanx Nano design meeting" })); // phalanx title + strout_arch title pattern
     expect(conflict).toBeNull();
   });

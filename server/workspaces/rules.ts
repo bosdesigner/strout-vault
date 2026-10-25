@@ -14,7 +14,7 @@ export const WORKSPACE_RULES: WorkspaceRule[] = [
   {
     workspaceId: "another_story",
     title: [/another\s?story/i, /\bcontractor call\b/i, /\bfranchise/i],
-    transcript: [/another\s?story/i, /anotherstorybldr/i, /\bfranchisee?s?\b/i, /\bterritor(y|ies)\b/i, /\bsecond[- ]story addition/i],
+    transcript: [/another\s?story/i, /anotherstorybldr/i, /\bfranchisee?s?\b/i, /\bterritor(y|ies)\b/i, /\bsecond[- ]story\b/i, /\bassessments?\b/i, /\bbuilder partners?\b/i],
   },
   {
     workspaceId: "phalanx",
@@ -37,9 +37,11 @@ export const WORKSPACE_RULES: WorkspaceRule[] = [
     transcript: [/southern shutter/i, /\bshutters?\b/i, /\bshutter renderer/i],
   },
   {
+    // Transcript terms are the ones AnotherStory assessment calls do NOT also use: "floor plan" and
+    // "architect" come up in both, so they count only in titles.
     workspaceId: "strout_arch",
     title: [/strout architecture/i, /\bdesign meeting\b/i, /feasibility study/i, /\bfloor ?plans?\b/i, /\barchitect/i, /\bacres?\b/i],
-    transcript: [/strout architecture/i, /feasibility stud(y|ies)/i, /\bfloor ?plans?\b/i, /\barchitect(ural|ure)?\b/i, /\bsite plan\b/i, /\bpermit set\b/i],
+    transcript: [/strout architecture/i, /feasibility stud(y|ies)/i, /\bsite plan\b/i, /\bpermit set\b/i, /\bschematic design\b/i, /\bconstruction documents?\b/i, /\bdesign (fee|contract|agreement)\b/i],
   },
 ];
 
