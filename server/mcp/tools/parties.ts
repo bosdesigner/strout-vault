@@ -30,7 +30,7 @@ export const getParty: ToolDef<typeof schema> = {
   name: "get_party",
   title: "Get a person or company",
   description:
-    "Look up a person or organisation by id, name (fuzzy), email or phone and return their profile: contact fields, affiliations (person ↔ company), roles by workspace (client, contractor, vendor, investor…), relationships, projects, the last 10 interactions they took part in, and facts about them or owned by them. " +
+    "Look up a person or organisation by id, name (fuzzy), email or phone and return their profile: contact fields, affiliations (person ↔ company), roles by workspace (client, contractor, vendor, investor…), relationships, projects, the last 10 interactions they took part in, facts about them or owned by them, and their lead submissions (source, stage, status, what they asked for). " +
     "When a name matches several people the result has `ambiguous: true` and a `candidates` list: pick one and call again with its id. Only what the token's workspace scope allows is returned. Includes a deep_link to the person's page.",
   inputSchema: schema,
   readOnly: true,
@@ -137,6 +137,17 @@ async function profile(ctx: ToolContext, id: number): Promise<Record<string, unk
       rel.params,
     ),
   ]);
+  const leadScope = sp("lr.workspace_id");
+  const leads = await ctx.reader
+    .query(
+      `select lr.origin, lr.lead_type, lr.channel, lr.stage, lr.status, lr.address, lr.market, lr.notes, lr.details, lr.submitted_at
+         from lead_records lr where lr.party_id = $1 and ${leadScope.sql} order by lr.submitted_at desc nulls last limit 20`,
+      leadScope.params,
+    )
+    .catch((err: { code?: string }) => {
+      if (err.code === "42P01") return { rows: [] as Record<string, unknown>[] }; // migration 0008 not applied yet
+      throw err;
+    });
   const pr = party.rows[0];
   return {
     party_id: pr.id,
@@ -163,6 +174,18 @@ async function profile(ctx: ToolContext, id: number): Promise<Record<string, unk
       role: f.owner_party_id === id ? "owner" : "about",
       project_id: f.project_id,
       interaction: f.interaction_id ? { interaction_id: f.interaction_id, title: f.interaction_title, occurred_at: iso(f.occurred_at), quote_start_sec: f.quote_start_sec, deep_link: deepLink(ctx, `/r/${f.interaction_id}${f.quote_start_sec != null ? `?t=${f.quote_start_sec}` : ""}`) } : null,
+    })),
+    leads: leads.rows.map((l) => ({
+      origin: l.origin,
+      lead_type: l.lead_type,
+      channel: l.channel,
+      stage: l.stage,
+      status: l.status,
+      address: l.address,
+      market: l.market,
+      notes: typeof l.notes === "string" ? l.notes.slice(0, 1000) : null,
+      details: l.details,
+      submitted_at: iso(l.submitted_at),
     })),
     deep_link: deepLink(ctx, `/p/${pr.id}`),
   };

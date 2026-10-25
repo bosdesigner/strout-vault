@@ -5,6 +5,7 @@ import { getParty } from "./parties.ts";
 import { getProject } from "./projects.ts";
 import { listOpenCommitments } from "./commitments.ts";
 import { proposeUpdate } from "./propose.ts";
+import { listLeads } from "./leads.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const TOOLS: ToolDef<any>[] = [searchConversations, getInteraction, listInteractions, getParty, getProject, listOpenCommitments, proposeUpdate];
+export const TOOLS: ToolDef<any>[] = [searchConversations, getInteraction, listInteractions, getParty, getProject, listOpenCommitments, listLeads, proposeUpdate];

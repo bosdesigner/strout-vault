@@ -88,6 +88,16 @@ const envSchema = z.object({
   EXTRACT_MAX_PER_RUN: z.coerce.number().int().positive().default(20),
   // Proposals below this confidence are dropped rather than queued.
   EXTRACT_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.6),
+  // ---- Leads (Jarvis step 3, docs/LEADS.md) ----
+  // Read-only sources the worker mirrors into lead_records every run. Each is optional.
+  //   LEADS_DATABASE_URL : AnotherStoryBLDR's Postgres (a SELECT-only role on leads + site_leads).
+  //   AIRTABLE_TOKEN     : a personal access token with data.records:read on the Client Pipeline base.
+  LEADS_DATABASE_URL: z.string().optional(),
+  AIRTABLE_TOKEN: z.string().optional(),
+  AIRTABLE_BASE_ID: z.string().default("appK6q2gwVCCc0gmF"),
+  AIRTABLE_API_URL: z.string().default("https://api.airtable.com"),
+  // Workspace a lead's party gets its prospect role in.
+  LEADS_WORKSPACE: z.string().default("another_story"),
   // Rendering approved candidates with ffmpeg: 9:16 crop ("vertical") or the whole frame ("full").
   CLIP_FORMAT: z.enum(["vertical", "full"]).default("vertical"),
   CLIP_PADDING_SEC: z.coerce.number().min(0).max(10).default(1),

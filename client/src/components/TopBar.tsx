@@ -68,6 +68,7 @@ export function TopBar({ user }: { user: { email: string; role: string; displayN
   const nav = owner ? (
     <nav aria-label="Primary" className="flex items-center gap-0.5 overflow-x-auto scrollbar-thin">
       <NavLink to="/" end className={navClass}>Library</NavLink>
+      <NavLink to="/leads" className={navClass}>Leads</NavLink>
       <NavLink to="/people" className={navClass}>People</NavLink>
       <NavLink to="/projects" className={navClass}>Projects</NavLink>
       <NavLink to="/clips" className={navClass}>Clips</NavLink>

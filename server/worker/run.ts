@@ -9,12 +9,14 @@ import { processTranscriptions, type TranscribeSummary } from "./transcribe.ts";
 import { processEmbeddings, type EmbedSummary } from "./embed.ts";
 import { processScouting, type ScoutSummary } from "./scout.ts";
 import { processExtraction, type ExtractSummary } from "./extract.ts";
+import { processLeads } from "./leads.ts";
+import type { LeadSyncSummary } from "../leads/sync.ts";
 import { processCuts, type CutSummary } from "./cut.ts";
 import { buildReport, type PipelineReport } from "./report.ts";
 import { setState } from "./sync.ts";
 
-export type Step = "zoom" | "transcribe" | "embed" | "extract" | "scout" | "cut" | "report";
-export const ALL_STEPS: Step[] = ["zoom", "transcribe", "embed", "extract", "scout", "cut", "report"];
+export type Step = "zoom" | "leads" | "transcribe" | "embed" | "extract" | "scout" | "cut" | "report";
+export const ALL_STEPS: Step[] = ["zoom", "leads", "transcribe", "embed", "extract", "scout", "cut", "report"];
 
 export interface RunOptions {
   trigger?: "schedule" | "manual" | "test";
@@ -24,6 +26,7 @@ export interface RunOptions {
 
 export interface RunSummary {
   zoom?: SyncSummary;
+  leads?: LeadSyncSummary;
   transcribe?: TranscribeSummary;
   embed?: EmbedSummary;
   extract?: ExtractSummary;
@@ -57,6 +60,8 @@ export interface WorkerConfigSnapshot {
   extractModel?: string;
   extractBudgetUsd?: number;
   extractWorkspaces?: string;
+  leadsPlatform?: boolean;
+  leadsAirtable?: boolean;
 }
 
 export function configSnapshot(ctx: WorkerContext): WorkerConfigSnapshot {
@@ -79,6 +84,8 @@ export function configSnapshot(ctx: WorkerContext): WorkerConfigSnapshot {
     extractModel: c.EXTRACT_MODEL,
     extractBudgetUsd: c.ANTHROPIC_API_KEY ? c.EXTRACT_MONTHLY_BUDGET_USD : 0,
     extractWorkspaces: c.EXTRACT_WORKSPACES,
+    leadsPlatform: !!c.LEADS_DATABASE_URL,
+    leadsAirtable: !!c.AIRTABLE_TOKEN,
     embeddingProvider: c.EMBEDDING_PROVIDER,
     embeddingModel: c.EMBEDDING_PROVIDER === "off" ? null : c.EMBEDDING_MODEL ?? (c.EMBEDDING_PROVIDER === "voyage" ? "voyage-3.5" : c.EMBEDDING_PROVIDER === "openai" ? "text-embedding-3-small" : "fake-hash-1024"),
   };
@@ -125,6 +132,7 @@ export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Prom
     for (const step of steps) {
       try {
         if (step === "zoom") summary.zoom = await syncZoom(ctx, { dryRun: opts.dryRun });
+        else if (step === "leads") summary.leads = await processLeads(ctx, { dryRun: opts.dryRun });
         else if (step === "transcribe" && !opts.dryRun) summary.transcribe = await processTranscriptions(ctx);
         else if (step === "embed" && !opts.dryRun) summary.embed = await processEmbeddings(ctx);
         else if (step === "extract" && !opts.dryRun) summary.extract = await processExtraction(ctx);
@@ -164,6 +172,15 @@ export function formatRunSummary(s: RunSummary): string {
       z.configured
         ? `zoom: ${z.recordingsSeen} seen, ${z.recordingsNew} new, ${z.filesQueued} file(s) queued; downloaded ${z.filesVerified + z.filesStable} ok, ${z.filesFailed} failed (${(z.bytes / 1024 / 1024).toFixed(1)} MB)${z.stoppedEarly ? `; stopped early: ${z.stoppedEarly}` : ""}`
         : "zoom: not configured",
+    );
+  }
+  if (s.leads) {
+    const l = s.leads;
+    const srcs = Object.entries(l.sources).filter(([, v]) => v.configured);
+    lines.push(
+      srcs.length
+        ? `leads: ${srcs.map(([k, v]) => `${k} ${v.error ? "FAILED" : v.read}`).join(", ")}; ${l.leads} lead(s), ${l.newLeads} new, ${l.partiesCreated} new part(ies), ${l.partiesMatched} matched, ${l.callLinksQueued} call link(s) queued${l.dryRun ? " (dry run, nothing written)" : ""}`
+        : "leads: off (no source configured)",
     );
   }
   if (s.transcribe) {
@@ -207,7 +224,7 @@ export function formatRunSummary(s: RunSummary): string {
     );
   }
   // Per-item errors from each step, a few of them: the full lists live in the run's summary JSON.
-  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.embed?.errors ?? []), ...(s.extract?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
+  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.leads?.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.embed?.errors ?? []), ...(s.extract?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
   if (itemErrors.length) {
     const shown = itemErrors.slice(0, 3);
     lines.push(`errors: ${shown.join(" | ")}${itemErrors.length > shown.length ? ` | …and ${itemErrors.length - shown.length} more` : ""}`);

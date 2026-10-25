@@ -275,9 +275,10 @@ export async function loadRecordingContext(pool: pg.Pool, interactionId: number)
          left join parties org on org.id = af.org_id
         where r.workspace_id = $1
         group by pa.id
-        order by (select count(*) from interaction_participants ip where ip.party_id = pa.id) desc, pa.name
+        -- People named in the title first (a lead's assessment call), then whoever is on the most calls.
+        order by (length(pa.name) >= 5 and strpos(lower($3), lower(pa.name)) > 0) desc, (select count(*) from interaction_participants ip where ip.party_id = pa.id) desc, pa.name
         limit $2`,
-      [ws, ROSTER_LIMIT],
+      [ws, ROSTER_LIMIT, rec.title ?? ""],
     ),
     pool.query(
       `select id, name, address, status from projects where workspace_id = $1
