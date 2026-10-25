@@ -80,7 +80,9 @@ export function classifyRecording(s: RecordingSignals, opts: ClassifyOptions = {
   if (second && second[1].score >= 0.85 && bestVote.score >= 0.85) return null;
   let confidence = bestVote.score;
   if (bestVote.evidence.length > 1) confidence = Math.min(0.95, confidence + 0.05);
-  if (second && second[1].score >= 0.6) confidence = Math.max(0.5, confidence - 0.1);
+  // A title-level signal is not weakened by transcript vocabulary pointing elsewhere (assessment
+  // calls talk about floor plans too); a transcript-only winner is, since its margin is thinner.
+  if (second && second[1].score >= 0.6 && bestVote.score < 0.85) confidence = Math.max(0.5, confidence - 0.1);
   return {
     interactionId: s.interactionId,
     workspaceId: best,
