@@ -1,0 +1,17 @@
+{
+  "name": "strout-vault-imessage-collector",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reads ~/Library/Messages/chat.db read-only and sends new texts to Strout Vault (POST /api/ingest/messages).",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dry-run": "node collector.mjs --dry-run",
+    "start": "node collector.mjs"
+  },
+  "dependencies": {
+    "node-typedstream": "1.4.1"
+  }
+}

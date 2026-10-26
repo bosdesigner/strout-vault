@@ -180,8 +180,8 @@ describe("parties", () => {
     expect(res.body.affiliations[0].other.name).toBe("Gulf Coast Millwork");
     expect(res.body.interactions.length).toBeGreaterThan(0);
   });
-  it("lists the six workspaces", async () => {
+  it("lists the six workspaces plus inbox and personal (texts and email, db/migrations/0009)", async () => {
     const res = await s.agent.get("/api/workspaces");
-    expect(res.body.items.map((w: { id: string }) => w.id).sort()).toEqual(["another_story", "credvault", "phalanx", "sepp", "southern_shutter", "strout_arch"]);
+    expect(res.body.items.map((w: { id: string }) => w.id).sort()).toEqual(["another_story", "credvault", "inbox", "personal", "phalanx", "sepp", "southern_shutter", "strout_arch"]);
   });
 });

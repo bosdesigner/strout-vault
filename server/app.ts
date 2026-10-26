@@ -30,6 +30,8 @@ import type { Mailer } from "./mail/types.ts";
 import { MemoryMailer } from "./mail/memory.ts";
 import { mountMcp, type MountOptions } from "./mcp/index.ts";
 import { mcpAdminRouter } from "./routes/mcpAdmin.ts";
+import { ingestRouter } from "./routes/ingest.ts";
+import { messagesRouter } from "./routes/messages.ts";
 
 export interface CreateAppOptions {
   config: Config;
@@ -79,6 +81,9 @@ export async function createApp(opts: CreateAppOptions): Promise<{ app: Express;
   app.use(healthRouter(ctx));
   // Public but signature-verified: Twilio voice/status/recording webhooks.
   app.use("/webhooks/twilio", twilioWebhooksRouter(ctx));
+  // Bearer-token only (ingest:messages): the iMessage collector's batches. Mounted ahead of /api so
+  // it gets its own body limit and never needs a session. See docs/MESSAGES.md.
+  app.use("/api/ingest", ingestRouter(ctx));
   // The MCP server (/mcp, bearer tokens) and its OAuth 2.1 endpoints (/authorize, /token, /register,
   // /revoke, /.well-known/*, /oauth/consent). Every tool call is scoped and audited; see docs/MCP.md.
   ctx.mcp = await mountMcp(app, ctx, { fetchImpl: ctx.fetchImpl, ...(opts.mcp ?? {}) });
@@ -114,6 +119,7 @@ export async function createApp(opts: CreateAppOptions): Promise<{ app: Express;
   api.use("/calls", requireOwner(), callsRouter(ctx));
   api.use("/pipeline", requireOwner(), pipelineRouter(ctx));
   api.use("/mcp", requireOwner(), mcpAdminRouter(ctx));
+  api.use("/messages", requireOwner(), messagesRouter(ctx));
   api.use((_req, res) => {
     res.status(404).json({ error: "not_found" });
   });

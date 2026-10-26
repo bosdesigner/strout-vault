@@ -6,6 +6,8 @@
 //   npm run worker -- --dry-run    enumerate Zoom, download nothing
 //   npm run worker -- --steps transcribe
 //   npm run worker -- --loop 30    run every 30 minutes until stopped
+//   WORKER_STEPS=gmail,embed       the steps to run when --steps is not given (the 10-minute
+//                                  messages deployment; docs/MESSAGES.md)
 
 import os from "node:os";
 import path from "node:path";
@@ -45,6 +47,7 @@ function parseArgs(argv: string[]) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const config = loadConfig();
+  if (!args.steps && config.WORKER_STEPS) args.steps = parseArgs(["--steps", config.WORKER_STEPS]).steps;
   const dbHandle = createDb(config.DATABASE_URL);
   const storage = createStorage(config);
   const tmpDir = config.WORKER_TMP_DIR ?? path.join(os.tmpdir(), "strout-vault-worker");

@@ -36,6 +36,8 @@ interface ApiToken {
   name: string;
   tokenPrefix: string;
   workspaceScope: string[];
+  /** vault:read + vault:propose (MCP), or ingest:messages alone (the iMessage collector). */
+  scopes?: string[];
   createdBy: string | null;
   createdAt: string;
   lastUsedAt: string | null;
@@ -211,6 +213,7 @@ function TokensTab({ status }: { status: Status | undefined }) {
   const [all, setAll] = useState(true);
   const [picked, setPicked] = useState<string[]>([]);
   const [expires, setExpires] = useState<string>("never");
+  const [kind, setKind] = useState<"mcp" | "ingest">("mcp");
   const [minted, setMinted] = useState<{ token: string; item: ApiToken } | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -220,7 +223,11 @@ function TokensTab({ status }: { status: Status | undefined }) {
   }, [all, picked, restricted]);
 
   const create = useMutation({
-    mutationFn: () => api<{ token: string; item: ApiToken }>("/mcp/tokens", { method: "POST", json: { name: name.trim(), workspaceScope: scope, expiresInDays: expires === "never" ? null : Number(expires) } }),
+    mutationFn: () =>
+      api<{ token: string; item: ApiToken }>("/mcp/tokens", {
+        method: "POST",
+        json: { name: name.trim(), workspaceScope: kind === "ingest" ? [] : scope, scopes: kind === "ingest" ? ["ingest:messages"] : undefined, expiresInDays: expires === "never" ? null : Number(expires) },
+      }),
     onSuccess: (out) => {
       setMinted(out);
       setCopied(false);
@@ -258,7 +265,7 @@ function TokensTab({ status }: { status: Status | undefined }) {
                     <code className="rounded bg-muted px-1.5 text-xs">{t.tokenPrefix}…</code>
                     {t.revokedAt ? <Badge variant="muted">revoked {formatRelative(t.revokedAt)}</Badge> : t.expiresAt && new Date(t.expiresAt) < new Date() ? <Badge variant="muted">expired</Badge> : <Badge variant="success">active</Badge>}
                   </div>
-                  <ScopeBadges scope={t.workspaceScope} restricted={restricted} />
+                  {t.scopes?.includes("ingest:messages") ? <Badge variant="secondary">message ingest only: no reads, no MCP</Badge> : <ScopeBadges scope={t.workspaceScope} restricted={restricted} />}
                   <p className="text-xs text-muted-foreground">
                     created {formatDate(t.createdAt)}{t.createdBy ? ` by ${t.createdBy}` : ""} · {t.lastUsedAt ? `last used ${formatRelative(t.lastUsedAt)}` : "never used"} · {t.calls} call{t.calls === 1 ? "" : "s"}
                     {t.expiresAt ? ` · expires ${formatDate(t.expiresAt)}` : ""}
@@ -300,9 +307,15 @@ function TokensTab({ status }: { status: Status | undefined }) {
                 {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Claude Code: <code className="rounded bg-muted px-1">claude mcp add --transport http strout-vault {status?.endpoint ?? "<PUBLIC_URL>/mcp"} --header "Authorization: Bearer &lt;token&gt;"</code>
-            </p>
+            {minted.item.scopes?.includes("ingest:messages") ? (
+              <p className="text-xs text-muted-foreground">
+                On the Mac: <code className="rounded bg-muted px-1">pbpaste &gt; ~/.strout-vault/imessage-token &amp;&amp; chmod 600 ~/.strout-vault/imessage-token</code> (collectors/imessage/README.md).
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Claude Code: <code className="rounded bg-muted px-1">claude mcp add --transport http strout-vault {status?.endpoint ?? "<PUBLIC_URL>/mcp"} --header "Authorization: Bearer &lt;token&gt;"</code>
+              </p>
+            )}
             <Button size="sm" variant="outline" onClick={() => setMinted(null)}>
               Done
             </Button>
@@ -320,40 +333,54 @@ function TokensTab({ status }: { status: Status | undefined }) {
               <Label htmlFor="token-name">Name</Label>
               <Input id="token-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Claude Code on the laptop" maxLength={100} required />
             </div>
-            <fieldset>
-              <legend className="text-sm font-medium">Workspaces</legend>
-              <label className="mt-1 flex items-center gap-2 text-sm">
-                <Checkbox checked={all} onCheckedChange={(v) => setAll(v === true)} /> All workspaces
-                <span className="text-xs text-muted-foreground">(never includes {restricted.join(", ")})</span>
-              </label>
-              <ul className="mt-1 space-y-1 pl-6">
-                {workspaces.map((w) => {
-                  const isRestricted = restricted.includes(w.id);
-                  const checked = picked.includes(w.id);
-                  const disabled = all && !isRestricted;
-                  return (
-                    <li key={w.id}>
-                      <label className={cn("flex items-center gap-2 text-sm", disabled && "text-muted-foreground")}>
-                        <Checkbox checked={disabled ? true : checked} disabled={disabled} onCheckedChange={() => toggle(w.id)} data-testid={`scope-${w.id}`} />
-                        {w.name}
-                        {isRestricted && <Badge variant="warning">explicit</Badge>}
-                      </label>
-                    </li>
-                  );
-                })}
-                <li>
-                  <label className="flex items-start gap-2 text-sm">
-                    <Checkbox className="mt-0.5" checked={picked.includes(UNASSIGNED)} onCheckedChange={() => toggle(UNASSIGNED)} data-testid="scope-unassigned" />
-                    <span>
-                      Unassigned recordings <Badge variant="warning">explicit</Badge>
-                      <span className="block text-xs text-muted-foreground">
-                        {status?.unassignedRecordings ?? 0} recording{status?.unassignedRecordings === 1 ? "" : "s"} not filed under a workspace yet. They can be about any venture, so "all workspaces" never includes them.
+            <div>
+              <Label htmlFor="token-kind">Kind</Label>
+              <Select value={kind} onValueChange={(v) => setKind(v as "mcp" | "ingest")}>
+                <SelectTrigger id="token-kind" data-testid="token-kind">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="mcp">MCP: read and propose</SelectItem>
+                  <SelectItem value="ingest">iMessage collector: send texts only</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {kind === "mcp" && (
+              <fieldset>
+                <legend className="text-sm font-medium">Workspaces</legend>
+                <label className="mt-1 flex items-center gap-2 text-sm">
+                  <Checkbox checked={all} onCheckedChange={(v) => setAll(v === true)} /> All workspaces
+                  <span className="text-xs text-muted-foreground">(never includes {restricted.join(", ")})</span>
+                </label>
+                <ul className="mt-1 space-y-1 pl-6">
+                  {workspaces.map((w) => {
+                    const isRestricted = restricted.includes(w.id);
+                    const checked = picked.includes(w.id);
+                    const disabled = all && !isRestricted;
+                    return (
+                      <li key={w.id}>
+                        <label className={cn("flex items-center gap-2 text-sm", disabled && "text-muted-foreground")}>
+                          <Checkbox checked={disabled ? true : checked} disabled={disabled} onCheckedChange={() => toggle(w.id)} data-testid={`scope-${w.id}`} />
+                          {w.name}
+                          {isRestricted && <Badge variant="warning">explicit</Badge>}
+                        </label>
+                      </li>
+                    );
+                  })}
+                  <li>
+                    <label className="flex items-start gap-2 text-sm">
+                      <Checkbox className="mt-0.5" checked={picked.includes(UNASSIGNED)} onCheckedChange={() => toggle(UNASSIGNED)} data-testid="scope-unassigned" />
+                      <span>
+                        Unassigned recordings <Badge variant="warning">explicit</Badge>
+                        <span className="block text-xs text-muted-foreground">
+                          {status?.unassignedRecordings ?? 0} recording{status?.unassignedRecordings === 1 ? "" : "s"} not filed under a workspace yet. They can be about any venture, so "all workspaces" never includes them.
+                        </span>
                       </span>
-                    </span>
-                  </label>
-                </li>
-              </ul>
-            </fieldset>
+                    </label>
+                  </li>
+                </ul>
+              </fieldset>
+            )}
             <div>
               <Label htmlFor="token-expiry">Expires</Label>
               <Select value={expires} onValueChange={setExpires}>
@@ -368,9 +395,13 @@ function TokensTab({ status }: { status: Status | undefined }) {
                 </SelectContent>
               </Select>
             </div>
-            <p className="text-xs text-muted-foreground">Scope: <ScopeBadges scope={scope} restricted={restricted} /></p>
+            {kind === "mcp" ? (
+              <p className="text-xs text-muted-foreground">Scope: <ScopeBadges scope={scope} restricted={restricted} /></p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Can only POST /api/ingest/messages. It reads nothing and cannot call any MCP tool.</p>
+            )}
             {create.isError && <p className="text-sm text-destructive">{(create.error as Error).message}</p>}
-            <Button type="submit" disabled={!name.trim() || create.isPending || !scope.length} data-testid="create-token">
+            <Button type="submit" disabled={!name.trim() || create.isPending || (kind === "mcp" && !scope.length)} data-testid="create-token">
               Create token
             </Button>
           </form>

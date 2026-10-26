@@ -23,6 +23,7 @@
     "embed:backfill": "tsx scripts/backfill-embeddings.ts",
     "mcp:semantic-check": "tsx scripts/semantic-check.ts",
     "workspaces:propose": "tsx scripts/propose-workspaces.ts",
+    "messages:gmail": "tsx scripts/gmail-backfill.ts",
     "hash-password": "tsx scripts/hash-password.ts",
     "test": "vitest run",
     "test:e2e": "playwright test",
@@ -56,11 +57,13 @@
     "date-fns": "^4.1.0",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.38.0",
+    "email-reply-parser": "^2.3.9",
     "esbuild": "^0.24.0",
     "express": "^5.0.1",
     "express-rate-limit": "^7.4.1",
     "hash-wasm": "^4.11.0",
     "helmet": "^8.0.0",
+    "libphonenumber-js": "^1.13.15",
     "lucide-react": "^0.453.0",
     "pg": "^8.13.1",
     "postcss": "^8.4.47",
@@ -73,6 +76,7 @@
     "tsx": "^4.19.1",
     "typescript": "^5.6.3",
     "vite": "^6.0.0",
+    "yaml": "^2.9.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -84,6 +88,7 @@
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
     "@types/supertest": "^6.0.2",
+    "node-typedstream": "^1.4.1",
     "supertest": "^7.0.0",
     "vitest": "^3.0.0"
   },

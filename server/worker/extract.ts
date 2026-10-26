@@ -352,6 +352,8 @@ export async function processExtraction(ctx: WorkerContext): Promise<ExtractSumm
             (select max(s.end_sec) - min(s.start_sec) from segments s where s.interaction_id = i.id) as span_sec
        from interactions i join transcripts t on t.interaction_id = i.id
       where i.extracted_at is null and i.workspace_id = any($1::text[])
+        -- Texts and email wait for their own extraction pass (docs/MESSAGES.md).
+        and i.kind not in ('text_thread', 'email_thread')
         and exists (select 1 from segments s where s.interaction_id = i.id)
       order by i.occurred_at desc nulls last, i.id desc
       limit $2`,

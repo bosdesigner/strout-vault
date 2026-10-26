@@ -3,7 +3,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import type { AppContext } from "../context.ts";
-import { createApiToken, listApiTokens, revokeApiToken } from "../mcp/auth/tokens.ts";
+import { createApiToken, listApiTokens, parseTokenScopes, revokeApiToken, TOKEN_SCOPES, type TokenScope } from "../mcp/auth/tokens.ts";
 import { listOAuthClients, revokeOAuthClient } from "../mcp/auth/oauth.ts";
 import { listAudit } from "../mcp/audit.ts";
 import { parseStoredScope, RESTRICTED_WORKSPACES, UNASSIGNED } from "../mcp/scope.ts";
@@ -60,10 +60,20 @@ export function mcpAdminRouter(ctx: AppContext): Router {
   r.post(
     "/tokens",
     wrap(async (req, res) => {
-      const body = parse(z.object({ name: z.string().trim().min(1).max(100), workspaceScope: scopeSchema, expiresInDays: z.coerce.number().int().min(1).max(3650).nullable().optional() }), req.body);
+      const body = parse(
+        z.object({
+          name: z.string().trim().min(1).max(100),
+          workspaceScope: scopeSchema,
+          scopes: z.array(z.enum(TOKEN_SCOPES)).max(5).nullable().optional(),
+          expiresInDays: z.coerce.number().int().min(1).max(3650).nullable().optional(),
+        }),
+        req.body,
+      );
       let scope: string[];
+      let scopes: TokenScope[];
       try {
-        scope = parseStoredScope(body.workspaceScope);
+        scopes = parseTokenScopes(body.scopes);
+        scope = scopes.includes("ingest:messages") ? [] : parseStoredScope(body.workspaceScope);
       } catch (err) {
         throw new HttpError(400, (err as Error).message);
       }
@@ -75,7 +85,7 @@ export function mcpAdminRouter(ctx: AppContext): Router {
         if (unknown.length) throw new HttpError(400, `unknown workspace: ${unknown.join(", ")}`);
       }
       const expiresAt = body.expiresInDays ? new Date(Date.now() + body.expiresInDays * 86400_000) : null;
-      const out = await createApiToken(ctx.pool, { name: body.name, workspaceScope: scope, createdBy: req.session?.email ?? null, expiresAt });
+      const out = await createApiToken(ctx.pool, { name: body.name, workspaceScope: scope, scopes, createdBy: req.session?.email ?? null, expiresAt });
       res.status(201).json({ token: out.token, item: out.row });
     }),
   );

@@ -133,7 +133,7 @@ describe("the unassigned scope", () => {
     expect(scopeSql(withUnassigned, params)).toMatch(/^\(i\.workspace_id = any\(\$1::text\[\]\) or i\.workspace_id is null\)$/);
     const only = await resolveScope(pool, ["unassigned"]);
     expect(scopeSql(only, [])).toBe("i.workspace_id is null");
-    expect(describeScope(["*", "unassigned"])).toBe("all workspaces except phalanx + unassigned recordings");
+    expect(describeScope(["*", "unassigned"])).toBe("all workspaces except phalanx, personal, inbox + unassigned recordings");
     expect(describeScope(["unassigned"])).toBe("no workspaces + unassigned recordings");
   });
 
