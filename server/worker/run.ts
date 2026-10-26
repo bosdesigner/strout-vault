@@ -10,13 +10,21 @@ import { processEmbeddings, type EmbedSummary } from "./embed.ts";
 import { processScouting, type ScoutSummary } from "./scout.ts";
 import { processExtraction, type ExtractSummary } from "./extract.ts";
 import { processLeads } from "./leads.ts";
+import { processGmail } from "./gmail.ts";
+import type { GmailSyncSummary } from "../messages/gmail/sync.ts";
 import type { LeadSyncSummary } from "../leads/sync.ts";
 import { processCuts, type CutSummary } from "./cut.ts";
 import { buildReport, type PipelineReport } from "./report.ts";
 import { setState } from "./sync.ts";
 
-export type Step = "zoom" | "leads" | "transcribe" | "embed" | "extract" | "scout" | "cut" | "report";
-export const ALL_STEPS: Step[] = ["zoom", "leads", "transcribe", "embed", "extract", "scout", "cut", "report"];
+export type Step = "zoom" | "leads" | "gmail" | "transcribe" | "embed" | "extract" | "scout" | "cut" | "report";
+export const ALL_STEPS: Step[] = ["zoom", "leads", "gmail", "transcribe", "embed", "extract", "scout", "cut", "report"];
+/**
+ * Steps a run may do without the main worker lock: the 10-minute messages deployment runs
+ * "gmail,embed" while the hourly run may still be transcribing. Each of those steps takes its
+ * own advisory lock, so two of them never overlap.
+ */
+export const LIGHT_STEPS: Step[] = ["gmail", "embed"];
 
 export interface RunOptions {
   trigger?: "schedule" | "manual" | "test";
@@ -27,6 +35,7 @@ export interface RunOptions {
 export interface RunSummary {
   zoom?: SyncSummary;
   leads?: LeadSyncSummary;
+  gmail?: GmailSyncSummary;
   transcribe?: TranscribeSummary;
   embed?: EmbedSummary;
   extract?: ExtractSummary;
@@ -62,6 +71,7 @@ export interface WorkerConfigSnapshot {
   extractWorkspaces?: string;
   leadsPlatform?: boolean;
   leadsAirtable?: boolean;
+  gmailConfigured?: boolean;
 }
 
 export function configSnapshot(ctx: WorkerContext): WorkerConfigSnapshot {
@@ -86,6 +96,7 @@ export function configSnapshot(ctx: WorkerContext): WorkerConfigSnapshot {
     extractWorkspaces: c.EXTRACT_WORKSPACES,
     leadsPlatform: !!c.LEADS_DATABASE_URL,
     leadsAirtable: !!c.AIRTABLE_TOKEN,
+    gmailConfigured: !!(c.GOOGLE_CLIENT_ID && c.GOOGLE_CLIENT_SECRET && c.MESSAGES_ENCRYPTION_KEY),
     embeddingProvider: c.EMBEDDING_PROVIDER,
     embeddingModel: c.EMBEDDING_PROVIDER === "off" ? null : c.EMBEDDING_MODEL ?? (c.EMBEDDING_PROVIDER === "voyage" ? "voyage-3.5" : c.EMBEDDING_PROVIDER === "openai" ? "text-embedding-3-small" : "fake-hash-1024"),
   };
@@ -98,6 +109,7 @@ export interface RunResult {
 }
 
 const LOCK_NAME = "strout-vault-worker";
+const LIGHT_LOCK_NAME = "strout-vault-worker-light";
 
 export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Promise<RunResult> {
   const steps = opts.steps ?? ALL_STEPS;
@@ -108,7 +120,8 @@ export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Prom
   const lockClient = await ctx.pool.connect();
   let locked = false;
   try {
-    const r = await lockClient.query<{ ok: boolean }>(`select pg_try_advisory_lock(hashtext($1)) as ok`, [LOCK_NAME]);
+    const lockName = steps.every((s) => LIGHT_STEPS.includes(s)) ? LIGHT_LOCK_NAME : LOCK_NAME;
+    const r = await lockClient.query<{ ok: boolean }>(`select pg_try_advisory_lock(hashtext($1)) as ok`, [lockName]);
     locked = !!r.rows[0]?.ok;
     if (!locked) {
       ctx.log("another worker run holds the lock; skipping this run");
@@ -133,6 +146,7 @@ export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Prom
       try {
         if (step === "zoom") summary.zoom = await syncZoom(ctx, { dryRun: opts.dryRun });
         else if (step === "leads") summary.leads = await processLeads(ctx, { dryRun: opts.dryRun });
+        else if (step === "gmail") summary.gmail = await processGmail(ctx, { dryRun: opts.dryRun });
         else if (step === "transcribe" && !opts.dryRun) summary.transcribe = await processTranscriptions(ctx);
         else if (step === "embed" && !opts.dryRun) summary.embed = await processEmbeddings(ctx);
         else if (step === "extract" && !opts.dryRun) summary.extract = await processExtraction(ctx);
@@ -157,7 +171,7 @@ export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Prom
     ctx.log(`run #${runId} ${ok ? "finished" : "finished with errors"} in ${summary.durationSec}s`);
     return { runId, ok, summary };
   } finally {
-    if (locked) await lockClient.query(`select pg_advisory_unlock(hashtext($1))`, [LOCK_NAME]).catch(() => {});
+    if (locked) await lockClient.query(`select pg_advisory_unlock(hashtext($1))`, [steps.every((s) => LIGHT_STEPS.includes(s)) ? LIGHT_LOCK_NAME : LOCK_NAME]).catch(() => {});
     lockClient.release();
   }
 }
@@ -181,6 +195,15 @@ export function formatRunSummary(s: RunSummary): string {
       srcs.length
         ? `leads: ${srcs.map(([k, v]) => `${k} ${v.error ? "FAILED" : v.read}`).join(", ")}; ${l.leads} lead(s), ${l.newLeads} new, ${l.partiesCreated} new part(ies), ${l.partiesMatched} matched, ${l.callLinksQueued} call link(s) queued${l.dryRun ? " (dry run, nothing written)" : ""}`
         : "leads: off (no source configured)",
+    );
+  }
+  if (s.gmail) {
+    const g = s.gmail;
+    const i = g.ingest;
+    lines.push(
+      g.skipped
+        ? `gmail: off (${g.skipped})`
+        : `gmail: ${g.accounts.map((a) => `${a.account} ${a.error ? "FAILED" : `${a.mode} ${a.threads}`}`).join(", ")}; ${i.created} new thread(s), ${i.updated} updated, ${i.unchanged} unchanged; skipped ${Object.entries(i.skipped).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}; ${i.reviewNewParty} unknown sender(s), ${i.reviewWorkspace} workspace decision(s) queued${g.dryRun ? " (dry run, nothing written)" : ""}${g.stoppedEarly ? `; stopped early: ${g.stoppedEarly}` : ""}`,
     );
   }
   if (s.transcribe) {
@@ -224,7 +247,7 @@ export function formatRunSummary(s: RunSummary): string {
     );
   }
   // Per-item errors from each step, a few of them: the full lists live in the run's summary JSON.
-  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.leads?.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.embed?.errors ?? []), ...(s.extract?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
+  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.leads?.errors ?? []), ...(s.gmail?.errors ?? []), ...(s.gmail?.ingest.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.embed?.errors ?? []), ...(s.extract?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
   if (itemErrors.length) {
     const shown = itemErrors.slice(0, 3);
     lines.push(`errors: ${shown.join(" | ")}${itemErrors.length > shown.length ? ` | …and ${itemErrors.length - shown.length} more` : ""}`);

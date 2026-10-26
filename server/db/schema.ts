@@ -96,7 +96,7 @@ export const interactions = pgTable("interactions", {
   id: id(),
   workspaceId: text("workspace_id").references(() => workspaces.id),
   mediaId: ref("media_id"),
-  kind: text("kind").notNull(), // call | meeting | email | text | in_person | other
+  kind: text("kind").notNull(), // call | meeting | email | text | in_person | other | text_thread | email_thread
   occurredAt: timestamp("occurred_at", { withTimezone: true }),
   title: text("title"),
   summary: text("summary"),
@@ -105,7 +105,7 @@ export const interactions = pgTable("interactions", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   // 0002_recordings
   vaultId: text("vault_id").unique(),
-  source: text("source"), // zoom | meet | upload | iphone_call | contractor_call
+  source: text("source"), // zoom | meet | upload | iphone_call | contractor_call | imessage | gmail
   sourceRef: text("source_ref"),
   legacyMeetingId: bigint("legacy_meeting_id", { mode: "number" }),
   originalFilename: text("original_filename"),

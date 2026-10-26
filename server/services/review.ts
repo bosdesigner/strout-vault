@@ -129,10 +129,12 @@ export async function decideReview(pool: pg.Pool, id: number, decision: "approve
       } else if (row.item_type in APPLIERS) {
         // The propose_update tool's types (MCP agents) and the extraction step's proposals.
         applied.push(...(await APPLIERS[row.item_type as ProposalType](client, proposal, row)));
-      } else if (row.item_type === "interaction_workspace") {
-        // Files a recording under a workspace (scripts/propose-workspaces.ts queues these).
+      } else if (row.item_type === "interaction_workspace" || row.item_type === "workspace_assignment") {
+        // Files a recording under a workspace (scripts/propose-workspaces.ts queues interaction_workspace;
+        // the message ingest queues workspace_assignment for texts and email it left in inbox).
         const interactionId = num(proposal.interaction_id) ?? (row.interaction_id as number | null);
         const workspaceId = typeof proposal.workspace_id === "string" ? proposal.workspace_id : null;
+        if (interactionId && !workspaceId) throw new ReviewError(400, "no workspace was suggested for this thread: reject it and file the thread from its page");
         if (!interactionId || !workspaceId) throw new ReviewError(400, "proposal is missing interaction_id or workspace_id");
         const ws = await client.query(`select 1 from workspaces where id = $1`, [workspaceId]);
         if (!ws.rowCount) throw new ReviewError(400, `unknown workspace ${workspaceId}`);
@@ -188,7 +190,7 @@ type Applier = (db: pg.PoolClient, proposal: Record<string, unknown>, row: Recor
 
 /** Re-validates a stored proposal (the shapes are the propose_update tool's) and strips the bookkeeping fields. */
 function shape<T extends ProposalType>(type: T, proposal: Record<string, unknown>): Record<string, unknown> {
-  const { source: _s, proposed_by: _b, token_id: _t, proposed_at: _a, model: _m, ...rest } = proposal;
+  const { source: _s, proposed_by: _b, token_id: _t, proposed_at: _a, model: _m, evidence: _e, ...rest } = proposal;
   const parsed = PROPOSAL_SCHEMAS[type].safeParse(rest);
   if (!parsed.success) throw new ReviewError(400, `proposal no longer matches the ${type} shape: ${parsed.error.issues.map((i) => `${i.path.join(".") || "proposal"} ${i.message}`).join("; ")}`);
   return parsed.data as Record<string, unknown>;
@@ -209,6 +211,37 @@ function uniqueList(existing: unknown, add: unknown): string[] {
   return out;
 }
 
+/**
+ * An unknown texter or emailer was approved as a party: their stored messages now point at it
+ * (segments.speaker_party_id where the message came from that identifier) and every thread they
+ * are in lists them as a participant. Workspaces are not re-routed; inbox threads keep their own
+ * workspace_assignment review rows.
+ */
+async function linkMessageSender(db: pg.PoolClient, partyId: number, identifier: string, name: string): Promise<string[]> {
+  const threads = await db.query<{ id: number }>(
+    `select id from interactions where kind in ('text_thread', 'email_thread') and participants_raw @> $1::jsonb`,
+    [JSON.stringify([{ identifier }])],
+  );
+  const ids = threads.rows.map((r) => Number(r.id));
+  if (!ids.length) return [];
+  const seg = await db.query(
+    `update segments s set speaker_party_id = $2
+       from interactions i cross join lateral jsonb_array_elements(i.source_payload->'messages') m
+      where i.id = any($1::bigint[]) and s.interaction_id = i.id and (m->>'idx')::int = s.idx and m->>'from' = $3 and s.speaker_party_id is null`,
+    [ids, partyId, identifier],
+  );
+  for (const id of ids) {
+    await db.query(`insert into interaction_participants (interaction_id, party_id, speaker_label, confidence) values ($1, $2, $3, 1) on conflict (interaction_id, party_id) do nothing`, [id, partyId, name]);
+  }
+  await db.query(
+    `update interactions set participants_raw = (
+        select jsonb_agg(case when e->>'identifier' = $2 then jsonb_set(e, '{party_id}', to_jsonb($3::bigint)) else e end) from jsonb_array_elements(participants_raw) e)
+      where id = any($1::bigint[])`,
+    [ids, identifier, partyId],
+  );
+  return [`interaction_participants (${ids.length} thread(s))`, `segments.speaker_party_id (${seg.rowCount ?? 0} message(s))`];
+}
+
 const APPLIERS: Record<ProposalType, Applier> = {
   async new_party(db, raw, row) {
     const p = shape("new_party", raw);
@@ -223,6 +256,8 @@ const APPLIERS: Record<ProposalType, Applier> = {
     ]);
     const partyId = ins.rows[0].id;
     const out = [`parties #${partyId}`];
+    const evidence = raw.evidence as { identifier?: unknown } | undefined;
+    if (raw.source === "messages" && typeof evidence?.identifier === "string") out.push(...(await linkMessageSender(db, partyId, evidence.identifier, p.name as string)));
     const role = p.role as { workspace_id: string; role: string; market?: string; detail?: string } | undefined;
     if (role) {
       const ws = await db.query(`select 1 from workspaces where id = $1`, [role.workspace_id]);

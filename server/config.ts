@@ -98,6 +98,28 @@ const envSchema = z.object({
   AIRTABLE_API_URL: z.string().default("https://api.airtable.com"),
   // Workspace a lead's party gets its prospect role in.
   LEADS_WORKSPACE: z.string().default("another_story"),
+  // ---- Texts + email (Jarvis step 4, docs/MESSAGES.md) ----
+  // Ben's own identifiers, comma-separated: his messages get speaker OWNER_NAME and are never
+  // queued as unknown senders. Each connected Gmail account's address counts as his too.
+  OWNER_PHONES: z.string().optional(),
+  OWNER_EMAILS: z.string().optional(),
+  OWNER_NAME: z.string().default("Ben"),
+  // Directory holding message_routing.yml and message_blocklist.yml.
+  MESSAGES_CONFIG_DIR: z.string().default("./config"),
+  // 32 random bytes (hex or base64) that encrypt Gmail refresh tokens at rest (AES-256-GCM).
+  // Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+  MESSAGES_ENCRYPTION_KEY: z.string().optional(),
+  // Google OAuth client (Web application) for connecting Gmail accounts, scope gmail.readonly only.
+  // Authorized redirect URI: <PUBLIC_URL>/api/messages/gmail/callback
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_OAUTH_AUTHORIZE_URL: z.string().default("https://accounts.google.com/o/oauth2/v2/auth"),
+  GOOGLE_OAUTH_TOKEN_URL: z.string().default("https://oauth2.googleapis.com/token"),
+  GMAIL_API_BASE: z.string().default("https://gmail.googleapis.com/gmail/v1"),
+  // Days the first backfill reaches back (npm run messages:gmail -- --since overrides it).
+  GMAIL_BACKFILL_DAYS: z.coerce.number().int().positive().default(365),
+  // Worker steps to run when no --steps argument is given (the 10-minute messages deployment sets "gmail,embed").
+  WORKER_STEPS: z.string().optional(),
   // Rendering approved candidates with ffmpeg: 9:16 crop ("vertical") or the whole frame ("full").
   CLIP_FORMAT: z.enum(["vertical", "full"]).default("vertical"),
   CLIP_PADDING_SEC: z.coerce.number().min(0).max(10).default(1),

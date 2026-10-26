@@ -1,0 +1,21 @@
+# Where texts and email go, beyond what the vault already knows.
+#
+# A new thread is filed under the one workspace its participants map to. Each matched person
+# contributes the rule below if there is one, otherwise every workspace they have a role in
+# (People page), directly, through the company they work for, or on a project. Email addresses
+# that contribute nothing fall back to the domain rules. Exactly one workspace wins; anything
+# else (none, several, or phalanx) goes to `inbox` with a review item. phalanx is never
+# assigned automatically, even from a rule here. `personal` and `inbox` are never visible to a
+# "*" token; name them on a token explicitly.
+#
+# Edit and save; the server and worker read this file on every import. Party ids are on each
+# person's page (the URL /people/<id>).
+
+# parties:
+#   42: personal          # Mom
+#   57: personal          # Sarah (sister)
+#   2: another_story      # Kevin McGuire: texts are always Another Story, whatever else he does
+
+# domains:
+#   oakridgebuilders.example.com: strout_arch
+#   gulfcoastmillwork.example.com: southern_shutter

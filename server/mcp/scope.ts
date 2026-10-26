@@ -1,13 +1,15 @@
 // Workspace scope: what a token may see. Stored on the token as a JSON array of workspace
 // ids, or ["*"] for every workspace except the restricted ones, or ["*", "phalanx"] to
-// include one. phalanx holds investor material and is never implied by "*". Every query
-// the MCP server runs ends in `scopeSql(...)`, including the vector search.
+// include one. phalanx holds investor material, personal holds family texts and email, and
+// inbox holds messages nobody has filed yet (which could be either); none of them is ever
+// implied by "*". Every query the MCP server runs ends in `scopeSql(...)`, including the
+// vector search.
 import type pg from "pg";
 
 export type StoredScope = string[];
 
 /** Workspaces that "*" never includes unless they are listed explicitly. */
-export const RESTRICTED_WORKSPACES = ["phalanx"] as const;
+export const RESTRICTED_WORKSPACES = ["phalanx", "personal", "inbox"] as const;
 
 /**
  * Pseudo-workspace for recordings that have no workspace_id yet (the Zoom sync never set one).

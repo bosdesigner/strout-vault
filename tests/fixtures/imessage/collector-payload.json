@@ -1,0 +1,206 @@
+[
+  {
+    "guid": "fx-k-1",
+    "chat_guid": "iMessage;-;+19365550142",
+    "chat_name": null,
+    "chat_participants": [
+      "+19365550142"
+    ],
+    "service": "iMessage",
+    "sent_at": "2026-10-20T14:05:00.000Z",
+    "is_from_me": false,
+    "handle": "+19365550142",
+    "text": "Conroe shoot is moved to Thursday, the client wants golden hour",
+    "attachments": []
+  },
+  {
+    "guid": "fx-k-2",
+    "chat_guid": "iMessage;-;+19365550142",
+    "chat_name": null,
+    "chat_participants": [
+      "+19365550142"
+    ],
+    "service": "iMessage",
+    "sent_at": "2026-10-20T14:07:30.000Z",
+    "is_from_me": true,
+    "handle": null,
+    "text": "Works for me. Can you bring the drone?",
+    "attachments": []
+  },
+  {
+    "guid": "fx-k-3",
+    "chat_guid": "iMessage;-;+19365550142",
+    "chat_name": null,
+    "chat_participants": [
+      "+19365550142"
+    ],
+    "service": "iMessage",
+    "sent_at": "2026-10-20T14:09:00.000Z",
+    "is_from_me": false,
+    "handle": "+19365550142",
+    "text": "Yes, batteries charged",
+    "attachments": []
+  },
+  {
+    "guid": "fx-k-5",
+    "chat_guid": "iMessage;-;+19365550142",
+    "chat_name": null,
+    "chat_participants": [
+      "+19365550142"
+    ],
+    "service": "iMessage",
+    "sent_at": "2026-10-21T04:30:00.000Z",
+    "is_from_me": false,
+    "handle": "+19365550142",
+    "text": "Sent the Conroe shot list ✅",
+    "attachments": []
+  },
+  {
+    "guid": "fx-k-6",
+    "chat_guid": "iMessage;-;+19365550142",
+    "chat_name": null,
+    "chat_participants": [
+      "+19365550142"
+    ],
+    "service": "iMessage",
+    "sent_at": "2026-10-22T03:30:00.000Z",
+    "is_from_me": true,
+    "handle": null,
+    "text": "Thanks, looks great",
+    "attachments": []
+  },
+  {
+    "guid": "fx-k-7",
+    "chat_guid": "iMessage;-;+19365550142",
+    "chat_name": null,
+    "chat_participants": [
+      "+19365550142"
+    ],
+    "service": "iMessage",
+    "sent_at": "2026-10-21T15:00:00.000Z",
+    "is_from_me": false,
+    "handle": "+19365550142",
+    "text": "Photo from the site",
+    "attachments": [
+      {
+        "filename": "IMG_0412.HEIC",
+        "mime": "image/heic",
+        "size": 2481337
+      }
+    ]
+  },
+  {
+    "guid": "fx-p-1",
+    "chat_guid": "SMS;-;(205) 555-0142",
+    "chat_name": null,
+    "chat_participants": [
+      "(205) 555-0142"
+    ],
+    "service": "SMS",
+    "sent_at": "2026-10-20T16:00:00.000Z",
+    "is_from_me": false,
+    "handle": "(205) 555-0142",
+    "text": "Hi Ben, this is Alex from the lumber yard",
+    "attachments": []
+  },
+  {
+    "guid": "fx-p-2",
+    "chat_guid": "iMessage;-;205.555.0142",
+    "chat_name": null,
+    "chat_participants": [
+      "205.555.0142"
+    ],
+    "service": "iMessage",
+    "sent_at": "2026-10-20T16:01:00.000Z",
+    "is_from_me": false,
+    "handle": "205.555.0142",
+    "text": "Trusses ship Monday",
+    "attachments": []
+  },
+  {
+    "guid": "fx-p-3",
+    "chat_guid": "iMessage;-;+12055550142",
+    "chat_name": null,
+    "chat_participants": [
+      "+12055550142"
+    ],
+    "service": "iMessage",
+    "sent_at": "2026-10-20T16:02:00.000Z",
+    "is_from_me": false,
+    "handle": "+12055550142",
+    "text": "Invoice to follow",
+    "attachments": []
+  },
+  {
+    "guid": "fx-x-1",
+    "chat_guid": "iMessage;-;+12145550166",
+    "chat_name": null,
+    "chat_participants": [
+      "+12145550166"
+    ],
+    "service": "iMessage",
+    "sent_at": "2026-10-20T18:00:00.000Z",
+    "is_from_me": false,
+    "handle": "+12145550166",
+    "text": "Phalanx term sheet redlines are in the data room",
+    "attachments": []
+  },
+  {
+    "guid": "fx-f-1",
+    "chat_guid": "iMessage;-;+15125550111",
+    "chat_name": null,
+    "chat_participants": [
+      "+15125550111"
+    ],
+    "service": "iMessage",
+    "sent_at": "2026-10-20T23:00:00.000Z",
+    "is_from_me": false,
+    "handle": "+15125550111",
+    "text": "Dinner Sunday at 6?",
+    "attachments": []
+  },
+  {
+    "guid": "fx-r-1",
+    "chat_guid": "iMessage;-;+17135550199",
+    "chat_name": null,
+    "chat_participants": [
+      "+17135550199"
+    ],
+    "service": "iMessage",
+    "sent_at": "2026-10-20T12:02:00.000Z",
+    "is_from_me": false,
+    "handle": "+17135550199",
+    "text": "Card 4111 1111 1111 1111 exp 04/29, my SSN is 123-45-6789",
+    "attachments": []
+  },
+  {
+    "guid": "fx-g-1",
+    "chat_guid": "chat-group-0001",
+    "chat_name": "Conroe crew",
+    "chat_participants": [
+      "+15125550177",
+      "+19365550142"
+    ],
+    "service": "iMessage",
+    "sent_at": "2026-10-20T20:00:00.000Z",
+    "is_from_me": false,
+    "handle": "+15125550177",
+    "text": "Who has the slider for Conroe?",
+    "attachments": []
+  },
+  {
+    "guid": "fx-g-2",
+    "chat_guid": "chat-group-0001",
+    "chat_name": "Conroe crew",
+    "chat_participants": [
+      "+15125550177",
+      "+19365550142"
+    ],
+    "service": "iMessage",
+    "sent_at": "2026-10-20T20:01:00.000Z",
+    "is_from_me": false,
+    "handle": "+19365550142",
+    "text": "I do",
+    "attachments": []
+  }
+]

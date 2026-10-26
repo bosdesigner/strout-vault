@@ -252,7 +252,7 @@ export class VaultOAuthProvider implements OAuthServerProvider {
       return {
         token,
         clientId: "personal-access-token",
-        scopes: [...OAUTH_SCOPES],
+        scopes: pat.scopes,
         // The SDK insists on an expiry; a non-expiring personal token is reported as far in the future.
         expiresAt: pat.expiresAt ?? Math.floor(Date.now() / 1000) + 365 * 24 * 3600,
         extra: { principal: pat.principal },

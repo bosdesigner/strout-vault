@@ -1,0 +1,15 @@
+# Senders whose texts and email are never stored. Checked before anything is written, along with
+# the built-in filters: Gmail Promotions/Social/Updates/Forums, mail with a List-Unsubscribe
+# header, SMS short codes, and one-time codes. Skips are counted per reason in import_runs.
+#
+# Edit and save; the server and worker read this file on every import.
+
+# emails:
+#   - noreply@bank.example.com
+#   - alerts@school.example.org
+
+# domains:
+#   - marketing.example.com
+
+# phones:
+#   - "+1 (800) 555-0100"

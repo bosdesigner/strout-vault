@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Strout Vault iMessage collector, every 15 minutes. Copy to ~/Library/LaunchAgents/, replace
+  the three REPLACE_ME values (see README.md), then:
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.stroutvault.imessage.plist
+  The token is NOT in this file: the collector reads ~/.strout-vault/imessage-token (chmod 600).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.stroutvault.imessage</string>
+  <key>ProgramArguments</key>
+  <array>
+    <!-- The exact node binary that was granted Full Disk Access (`which node`, resolved). -->
+    <string>REPLACE_ME_NODE_PATH</string>
+    <string>REPLACE_ME_REPO/collectors/imessage/collector.mjs</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>STROUT_VAULT_URL</key>
+    <string>REPLACE_ME_URL</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>900</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+  <!-- Counts only; message text is never printed. -->
+  <key>StandardOutPath</key>
+  <string>/tmp/strout-vault-imessage.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/strout-vault-imessage.log</string>
+</dict>
+</plist>

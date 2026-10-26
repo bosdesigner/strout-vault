@@ -6,7 +6,7 @@
 import type { WorkerContext } from "./context.ts";
 import { outOfTime } from "./context.ts";
 import { createEmbeddingProvider, type EmbeddingProvider } from "../embeddings/provider.ts";
-import { embedInteraction, listEmbedCandidates } from "../embeddings/pipeline.ts";
+import { embedInteraction, listEmbedCandidates, type EmbedCandidate } from "../embeddings/pipeline.ts";
 
 export interface EmbedSummary {
   configured: boolean;
@@ -40,8 +40,29 @@ export async function processEmbeddings(ctx: WorkerContext, providerOverride?: E
   summary.configured = true;
   summary.provider = provider.name;
   summary.model = provider.model;
-  if (candidates.length) ctx.log(`embed: ${candidates.length} recording(s) waiting (${provider.name} ${provider.model})`);
+  if (!candidates.length) return summary;
+  ctx.log(`embed: ${candidates.length} recording(s) waiting (${provider.name} ${provider.model})`);
 
+  // The hourly run and the 10-minute messages run both embed; two runs rebuilding the same
+  // recording's chunks at once could leave both sets behind, so only one embeds at a time.
+  const lock = await ctx.pool.connect();
+  let locked = false;
+  try {
+    locked = !!(await lock.query<{ ok: boolean }>(`select pg_try_advisory_lock(hashtext('strout-vault-embed')) as ok`)).rows[0]?.ok;
+    if (!locked) {
+      summary.stoppedEarly = "another embedding run is in progress";
+      return summary;
+    }
+    await embedCandidates(ctx, provider, candidates, summary);
+  } finally {
+    if (locked) await lock.query(`select pg_advisory_unlock(hashtext('strout-vault-embed'))`).catch(() => {});
+    lock.release();
+  }
+  summary.estimatedUsd = (summary.tokens / 1_000_000) * provider.usdPerMillionTokens;
+  return summary;
+}
+
+async function embedCandidates(ctx: WorkerContext, provider: EmbeddingProvider, candidates: EmbedCandidate[], summary: EmbedSummary): Promise<void> {
   // A few recordings in flight at a time; each one is its own transaction.
   const queue = [...candidates];
   const workers = Array.from({ length: Math.max(1, ctx.config.EMBED_CONCURRENCY) }, async () => {
@@ -53,7 +74,7 @@ export async function processEmbeddings(ctx: WorkerContext, providerOverride?: E
       const c = queue.shift()!;
       const label = c.title?.trim() || `#${c.id}`;
       try {
-        const out = await embedInteraction(ctx.pool, provider!, c.id);
+        const out = await embedInteraction(ctx.pool, provider, c.id);
         if (out.skipped) continue;
         summary.done++;
         summary.chunks += out.chunks.length;
@@ -73,6 +94,4 @@ export async function processEmbeddings(ctx: WorkerContext, providerOverride?: E
     }
   });
   await Promise.all(workers);
-  summary.estimatedUsd = (summary.tokens / 1_000_000) * provider.usdPerMillionTokens;
-  return summary;
 }

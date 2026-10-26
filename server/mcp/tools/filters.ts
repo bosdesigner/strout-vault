@@ -7,6 +7,7 @@ export interface InteractionFilters {
   workspace?: string;
   party_id?: number;
   project_id?: number;
+  kind?: string;
   since?: string;
   until?: string;
 }
@@ -37,6 +38,7 @@ export function interactionWhere(ctx: ToolContext, f: InteractionFilters, alias 
   }
   if (f.party_id) conds.push(`exists (select 1 from interaction_participants ip where ip.interaction_id = ${alias}.id and ip.party_id = ${p(f.party_id)})`);
   if (f.project_id) conds.push(`exists (select 1 from interaction_links il where il.interaction_id = ${alias}.id and il.project_id = ${p(f.project_id)})`);
+  if (f.kind) conds.push(`${alias}.kind = ${p(f.kind)}`);
   if (f.since) conds.push(`${alias}.occurred_at >= ${p(parseDate(f.since, "since"))}::timestamptz`);
   if (f.until) conds.push(`${alias}.occurred_at < ${p(parseDate(f.until, "until"))}::timestamptz`);
   return { where: conds.join(" and "), params, p, outOfScope };

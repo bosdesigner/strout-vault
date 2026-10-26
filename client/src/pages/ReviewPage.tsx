@@ -224,6 +224,7 @@ function describe(it: ReviewItem): string {
   if (it.itemType === "link_project_interaction") return `Link ${it.project?.name ?? `project #${String(p.project_id)}`} to this recording${who}`;
   if (it.itemType === "link_party_interaction" && it.party) return `Tag ${it.party.name} on this recording${it.speakerLabel ? ` as ${it.speakerLabel}` : ""}${who}`;
   if (it.itemType === "new_relationship") return `New relationship: #${String(p.from_party_id)} ${String(p.kind)} #${String(p.to_party_id)}${who}`;
+  if (it.itemType === "workspace_assignment") return p.workspace_id ? `File this thread under ${String(p.workspace_id)}` : "Choose a workspace for this thread";
   if (it.itemType === "interaction_workspace") return `File under ${String(p.workspace_id)}${typeof p.confidence === "number" ? ` (${Math.round(p.confidence * 100)}% sure)` : ""}`;
   return `${it.itemType.replace(/_/g, " ")} proposal${who}`;
 }
