@@ -66,11 +66,14 @@ export function buildAppleFixtures(root: string, opts: { legacy?: boolean; broke
   const call2Media = "MEDIA-CALL-0002";
   const otherMedia = "MEDIA-OTHER-0001";
   const call3Media = "MEDIA-CALL-0003";
+  const momentsMedia = "MEDIA-MOMENTS-0001";
   tone(path.join(notesDir, "Accounts", accountId, "Media", callMedia, "1_7A2B", "Call with Kevin McGuire.m4a"), 660, 8);
   tone(path.join(notesDir, "Accounts", accountId, "Media", call2Media, "1_9C3D", "Call.m4a"), 700, 5);
   tone(path.join(notesDir, "Accounts", accountId, "Media", otherMedia, "Audio.m4a"), 900, 3);
   tone(path.join(notesDir, "Accounts", accountId, "Media", call3Media, "1_4E5F", "Call Recording.m4a"), 740, 5);
-  for (const d of [callMedia, call2Media, otherMedia, call3Media]) {
+  // iOS keeps every recorded call twice: the exported "Call with ….m4a" and this raw "moments" copy.
+  tone(path.join(notesDir, "Accounts", accountId, "Media", momentsMedia, "1_8A9B", "moments_10_21_10_04_05-audio.MOV"), 660, 8);
+  for (const d of [callMedia, call2Media, otherMedia, call3Media, momentsMedia]) {
     const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]));
     files.push(...walk(path.join(notesDir, "Accounts", accountId, "Media", d)));
   }
@@ -117,10 +120,12 @@ export function buildAppleFixtures(root: string, opts: { legacy?: boolean; broke
   media(101, call2Media, "Call.m4a");
   media(102, otherMedia, "Audio.m4a");
   media(103, call3Media, "Call Recording.m4a");
-  attach(200, "ATT-0200-CALL", 15, 100, 8, "Kevin: The drone pass has to happen before nine. Ben: Then we start at sunrise.");
+  media(104, momentsMedia, "moments_10_21_10_04_05-audio.MOV");
+  attach(200, "ATT-0200-CALL", 15, 100, 0, "Kevin: The drone pass has to happen before nine. Ben: Then we start at sunrise.");
   attach(201, "ATT-0201-CALL", 16, 101, 5, null);
   attach(202, "ATT-0202-AUDI", 17, 102, 3, null);
   attach(203, "ATT-0203-CALL", 18, 103, 5, null);
+  obj.run(204, "ATT-0204-MOMT", null, null, null, null, null, null, null, 0, 0, null, "public.mpeg-4-audio", 15, 104, null, 8, null);
   ns.close();
   files.push(path.join(voiceMemosDir, "CloudRecordings.db"), path.join(notesDir, "NoteStore.sqlite"));
   return { root, voiceMemosDir, notesDir, files: files.sort() };

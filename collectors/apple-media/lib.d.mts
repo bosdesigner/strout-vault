@@ -90,8 +90,9 @@ export interface CallRecording {
   appleTranscript: string | null;
   skip: "locked" | "deleted" | "not_downloaded" | null;
 }
-export function readNotes(db: DatabaseSync, notesDir: string, cfg?: CollectorConfig): { notes: TextNote[]; recordings: CallRecording[]; otherAudio: number; folders: string[] };
+export function readNotes(db: DatabaseSync, notesDir: string, cfg?: CollectorConfig): { notes: TextNote[]; recordings: CallRecording[]; otherAudio: number; duplicateCopies: number; folders: string[] };
 export const CALL_TITLE: RegExp;
+export const MOMENTS_FILE: RegExp;
 export function participantFromTitle(title: string | null): { name: string | null; phone: string | null } | null;
 export function findMediaFile(notesDir: string, accountId: string | null, mediaId: string | null, filename: string | null): string | null;
 export function discover(paths?: ApplePaths): string;
