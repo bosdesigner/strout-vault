@@ -97,6 +97,7 @@ export function clientFor(deps: GmailDeps, account: GmailAccount): GmailClient {
     refreshToken: decryptSecret(account.refreshTokenEnc, c.MESSAGES_ENCRYPTION_KEY),
     fetchImpl: deps.fetchImpl,
     sleep: deps.sleep,
+    log: deps.log,
   });
 }
 
@@ -180,6 +181,7 @@ export async function backfillGmail(deps: GmailDeps, account: GmailAccount, opts
     state.pages++;
     state.threads += r.fetched;
     if (!state.page_token) state.done = true;
+    deps.log(`gmail: ${account.accountEmail}: page ${state.pages}, ${threads} thread(s) read so far (${into.created} ${opts.dryRun ? "would be new" : "new"}, ${into.unchanged} unchanged)${state.done ? ", last page" : ""}`);
     if (!opts.dryRun) await setState(deps.pool, key, state);
   }
   if (!opts.dryRun && state.done && !account.historyId && state.start_history_id) {
