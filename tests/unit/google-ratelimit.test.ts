@@ -1,7 +1,7 @@
 // Google's per-minute quota answers (429, and 403 "Quota exceeded … per minute per user") are waited
 // out, not treated as failures; a 403 that is a real permission error still fails at once.
 import { describe, expect, it } from "vitest";
-import { GmailClient, isRateLimited, rateLimitWaitMs } from "../../server/messages/gmail/api.ts";
+import { GmailClient, isRateLimited, Pacer, rateLimitWaitMs } from "../../server/messages/gmail/api.ts";
 
 const QUOTA = JSON.stringify({ error: { code: 403, message: "Quota exceeded for quota metric 'Total Query Cost' and limit 'Units per minute per user' of service 'gmail.googleapis.com'", status: "PERMISSION_DENIED" } });
 const DENIED = JSON.stringify({ error: { code: 403, message: "Request had insufficient authentication scopes.", status: "PERMISSION_DENIED" } });
@@ -30,7 +30,9 @@ describe("Google rate limits", () => {
     const slept: number[] = [];
     const c = client([[403, QUOTA], [403, QUOTA], [200, JSON.stringify({ emailAddress: "ben@example.com", historyId: "1" })]], slept);
     expect((await c.profile()).emailAddress).toBe("ben@example.com");
-    expect(slept).toEqual([15_000, 30_000]);
+    // The two quota waits, and the pacing gap they left before the request that succeeded.
+    expect(slept.slice(0, 2)).toEqual([15_000, 30_000]);
+    expect(slept.slice(2).every((ms) => ms <= 500)).toBe(true);
   });
 
   it("fails at once on a real 403", async () => {
@@ -38,5 +40,27 @@ describe("Google rate limits", () => {
     const c = client([[403, DENIED]], slept);
     await expect(c.profile()).rejects.toThrow(/403/);
     expect(slept).toEqual([]);
+  });
+
+  it("paces requests: a quota answer spaces later calls out, successes bring the gap back down", async () => {
+    let t = 0;
+    const slept: number[] = [];
+    const p = new Pacer(async (ms) => {
+      slept.push(ms);
+      t += ms;
+    }, () => t);
+    await p.wait();
+    await p.wait();
+    expect(slept).toEqual([]);
+    p.slowDown();
+    p.slowDown();
+    expect(p.gapMs).toBe(500);
+    // Four requests at once still go out one gap apart.
+    await Promise.all([p.wait(), p.wait(), p.wait(), p.wait()]);
+    expect(t).toBeGreaterThanOrEqual(1500);
+    for (let i = 0; i < 300; i++) p.ok();
+    expect(p.gapMs).toBe(0);
+    for (let i = 0; i < 10; i++) p.slowDown();
+    expect(p.gapMs).toBe(5000);
   });
 });

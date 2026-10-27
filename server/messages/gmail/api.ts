@@ -20,6 +20,36 @@ export function rateLimitWaitMs(retryAfter: string | null, attempt: number): num
   return Math.min(15_000 * 2 ** attempt, 65_000);
 }
 
+/**
+ * Spaces requests out to the rate Google allows. Every request reserves the next slot (so four in
+ * flight still go out one gap apart); a quota answer doubles the gap (up to 5 s), each success
+ * shrinks it slowly. The run settles just under the account's per-minute limit instead of hitting
+ * it on every batch and sleeping.
+ */
+export class Pacer {
+  gapMs = 0;
+  private nextAt = 0;
+  constructor(
+    private sleep: (ms: number) => Promise<void>,
+    private now: () => number = Date.now,
+  ) {}
+
+  async wait(): Promise<void> {
+    const now = this.now();
+    const at = Math.max(now, this.nextAt);
+    this.nextAt = at + this.gapMs;
+    if (at > now) await this.sleep(at - now);
+  }
+
+  slowDown(): void {
+    this.gapMs = Math.min(Math.max(this.gapMs * 2, 250), 5000);
+  }
+
+  ok(): void {
+    this.gapMs = this.gapMs < 20 ? 0 : this.gapMs * 0.97;
+  }
+}
+
 export class GmailApiError extends Error {
   constructor(
     public status: number,
@@ -46,8 +76,11 @@ export class GmailClient {
   private expiresAt = 0;
   /** API calls made (for the run summary; Gmail costs quota units, not money). */
   calls = 0;
+  private pacer: Pacer;
 
-  constructor(private o: GmailClientOptions) {}
+  constructor(private o: GmailClientOptions) {
+    this.pacer = new Pacer(o.sleep);
+  }
 
   private async token(): Promise<string> {
     if (this.accessToken && Date.now() < this.expiresAt - 60_000) return this.accessToken;
@@ -68,15 +101,20 @@ export class GmailClient {
     const url = new URL(`${this.o.apiBase.replace(/\/$/, "")}/users/me/${path}`);
     for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== "") url.searchParams.append(k, String(v));
     for (let attempt = 0; ; attempt++) {
+      await this.pacer.wait();
       this.calls++;
       const res = await this.o.fetchImpl(url, { headers: { authorization: `Bearer ${await this.token()}` } });
-      if (res.ok) return (await res.json()) as T;
+      if (res.ok) {
+        this.pacer.ok();
+        return (await res.json()) as T;
+      }
       const text = await res.text().catch(() => "");
       // Quota: Gmail answers 429, or 403 "Quota exceeded … per minute per user" / rateLimitExceeded.
       // The per-minute window resets within a minute, so wait it out instead of failing the run.
       if (isRateLimited(res.status, text) && attempt < RATE_LIMIT_RETRIES) {
         const wait = rateLimitWaitMs(res.headers.get("retry-after"), attempt);
-        this.o.log?.(`gmail: Google's per-minute quota reached; waiting ${Math.round(wait / 1000)} s (try ${attempt + 1} of ${RATE_LIMIT_RETRIES})`);
+        this.pacer.slowDown();
+        this.o.log?.(`gmail: Google's per-minute quota reached; waiting ${Math.round(wait / 1000)} s (try ${attempt + 1} of ${RATE_LIMIT_RETRIES}); pacing requests ${this.pacer.gapMs.toFixed(0)} ms apart`);
         await this.o.sleep(wait);
         continue;
       }
