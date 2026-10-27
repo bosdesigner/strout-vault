@@ -86,6 +86,8 @@ psql "$DATABASE_URL" -f db/migrations/0003_access_and_calls.sql
 
 **Texts and email add `db/migrations/0009_messages.sql`** (after 0008): the `text_thread` / `email_thread` interaction kinds, the `personal` and `inbox` workspaces (never part of a `"*"` token scope), `api_tokens.scopes` (the iMessage collector's `ingest:messages` tokens), `message_accounts` (connected Gmail accounts, refresh tokens encrypted) and three indexes; `/api/health` then reports `v0.9`. Setup, the 10-minute Gmail deployment and the backfill are in [`docs/MESSAGES.md`](docs/MESSAGES.md).
 
+**Every remaining ingest point adds `db/migrations/0010_device_and_meet.sql`** (after 0009): the `recording` and `note` interaction kinds, `api_tokens.purpose`, Google Meet accounts on `message_accounts`, and a unique index on device-uploaded `media.sha256`; `/api/health` then reports `v0.10`. The single turn-on checklist for every ingest point is [`docs/INGEST.md`](docs/INGEST.md).
+
 **MCP roles.** The MCP read tools connect as `mcp_reader` (SELECT only) and `propose_update` as `mcp_proposer` (INSERT into `review_queue` only), never as the app role. In the Neon console (Roles & Databases → Add role) create `mcp_reader` and `mcp_proposer` on the production branch, copy each role's pooled connection string into the secrets as `MCP_READER_DATABASE_URL` and `MCP_PROPOSER_DATABASE_URL`, then apply `0006_mcp.sql` as the owner so the grants land (the file skips grants with a NOTICE when a role is missing; re-apply after creating it). Details, the Claude.ai connector setup and the embedding backfill are in [`docs/MCP.md`](docs/MCP.md).
 
 ### 4. Click Deploy
@@ -152,6 +154,8 @@ Useful scripts:
 | `npm run hash-password` | bcrypt hash for `ADMIN_PASSWORD_HASH` |
 | `npm run embed:backfill -- --dry-run` | Count, chunk and price the embedding backlog; drop `--dry-run` (and add `--yes` off localhost) to embed it |
 | `npm run mcp:semantic-check` | Embed the local seed and run the five-query semantic quality check into `docs/mcp-verification/semantic-check.md` |
+| `npm run messages:meet -- --account <a> --since 90 --dry-run` | List (and without `--dry-run`, record and download) Google Meet recordings for a connected account |
+| `npm run sources:demo` | Load fake ingest history into the local database so `/pipeline` → Sources shows every status (`SCREENSHOT_PHASE=ingest npm run screenshots` captures it) |
 | `npm run workspaces:propose` | Propose a workspace for every recording that has none (dry run; `--apply` queues review items, approval files the recording) |
 | `scripts/mcp-inspector-transcripts.sh` | Call every MCP tool through the MCP Inspector against a running vault and save the transcripts |
 
@@ -179,6 +183,8 @@ server/            Express 5 API (TypeScript, ESM)
   db/schema.ts     hand-written Drizzle schema matching db/migrations exactly
 client/            React 18 + Vite + Tailwind + shadcn-style components
 collectors/imessage/  the Mac-side iMessage/SMS collector (plain Node, launchd every 15 minutes)
+collectors/apple-media/ the Mac-side Voice Memos / call recordings / Apple Notes collector (launchd every 10 minutes)
+collectors/ios/    the "Send to Vault" iPhone Shortcut, step by step (SHORTCUT.md)
 config/            message_routing.yml and message_blocklist.yml (Ben's rules for texts and email)
 shared/            types and text helpers used by both sides
 db/migrations/     0001 and 0002 copied unchanged from meeting-vault (source of truth); 0003-0005 additive
@@ -218,3 +224,4 @@ tests/             unit + API (Vitest), end-to-end (Playwright)
 - [x] Extraction + applying approvals (Jarvis step 2): the worker reads filed recordings with Claude and queues facts, speaker matches and project links for review; approving any proposal type now writes it ([docs/EXTRACTION.md](docs/EXTRACTION.md)). Apply migration `0007` first, then set `EXTRACT_MONTHLY_BUDGET_USD` on the worker
 - [x] Texts + email (Jarvis step 4): iMessage/SMS from a collector on the Mac (`POST /api/ingest/messages`, `ingest:messages` tokens) and Gmail read-only (10-minute history sync, resumable backfill) become `text_thread` / `email_thread` interactions, filtered and redacted before storage, matched to parties (unknown senders go to Review), routed to workspaces (phalanx never automatic; new `personal` and `inbox` workspaces) and searchable through the MCP tools with a `kind` filter ([docs/MESSAGES.md](docs/MESSAGES.md), [verification](docs/messages-verification/)). Apply migration `0009`, then follow the doc
 - [x] Leads (Jarvis step 3): platform leads, the funnel and Airtable mirrored into `lead_records`, one party per person with a prospect role, call links proposed from recording titles, Leads page and `list_leads` ([docs/LEADS.md](docs/LEADS.md)). Apply migration `0008`, then set `LEADS_DATABASE_URL` and `AIRTABLE_TOKEN` on the worker
+- [x] Every ingest point: Voice Memos, iPhone call recordings and Apple Notes (Mac collector `collectors/apple-media`, iPhone Shortcut, `/api/ingest/device`, `ingest:device` tokens), Google Meet (read-only Drive step in the worker, transcript Docs, `npm run messages:meet`), and the **Sources** panel on the Pipeline page ([docs/INGEST.md](docs/INGEST.md), [verification](docs/ingest-verification/)). Apply migration `0010`, then follow the doc
