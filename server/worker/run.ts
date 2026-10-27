@@ -12,6 +12,9 @@ import { processExtraction, type ExtractSummary } from "./extract.ts";
 import { processLeads } from "./leads.ts";
 import { processGmail } from "./gmail.ts";
 import { processMeet } from "./meet.ts";
+import { refileInbox, type RefileSummary } from "../workspaces/refile.ts";
+import { loadMessageRules } from "../messages/rules.ts";
+import { ownerIdentity } from "../messages/identity.ts";
 import type { MeetSyncSummary } from "../meet/sync.ts";
 import type { GmailSyncSummary } from "../messages/gmail/sync.ts";
 import type { LeadSyncSummary } from "../leads/sync.ts";
@@ -19,8 +22,8 @@ import { processCuts, type CutSummary } from "./cut.ts";
 import { buildReport, type PipelineReport } from "./report.ts";
 import { setState } from "./sync.ts";
 
-export type Step = "zoom" | "meet" | "leads" | "gmail" | "transcribe" | "embed" | "extract" | "scout" | "cut" | "report";
-export const ALL_STEPS: Step[] = ["zoom", "meet", "leads", "gmail", "transcribe", "embed", "extract", "scout", "cut", "report"];
+export type Step = "zoom" | "meet" | "leads" | "gmail" | "refile" | "transcribe" | "embed" | "extract" | "scout" | "cut" | "report";
+export const ALL_STEPS: Step[] = ["zoom", "meet", "leads", "gmail", "refile", "transcribe", "embed", "extract", "scout", "cut", "report"];
 /**
  * Steps a run may do without the main worker lock: the 10-minute messages deployment runs
  * "gmail,embed" while the hourly run may still be transcribing. Each of those steps takes its
@@ -37,6 +40,7 @@ export interface RunOptions {
 export interface RunSummary {
   zoom?: SyncSummary;
   meet?: MeetSyncSummary;
+  refile?: RefileSummary;
   leads?: LeadSyncSummary;
   gmail?: GmailSyncSummary;
   transcribe?: TranscribeSummary;
@@ -151,6 +155,7 @@ export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Prom
       try {
         if (step === "zoom") summary.zoom = await syncZoom(ctx, { dryRun: opts.dryRun });
         else if (step === "meet") summary.meet = await processMeet(ctx, { dryRun: opts.dryRun });
+        else if (step === "refile" && !opts.dryRun) summary.refile = await refileInbox(ctx.pool, loadMessageRules(ctx.config.MESSAGES_CONFIG_DIR), ownerIdentity(ctx.config));
         else if (step === "leads") summary.leads = await processLeads(ctx, { dryRun: opts.dryRun });
         else if (step === "gmail") summary.gmail = await processGmail(ctx, { dryRun: opts.dryRun });
         else if (step === "transcribe" && !opts.dryRun) summary.transcribe = await processTranscriptions(ctx);
@@ -201,6 +206,10 @@ export function formatRunSummary(s: RunSummary): string {
         ? `meet: off (${m.skipped})`
         : `meet: ${m.accounts.map((a) => `${a.account} ${a.error ? "FAILED" : a.capability === "none_found" ? "no recordings" : `${a.recordingsNew} new of ${a.recordingsSeen}`}`).join(", ")}; downloaded ${m.filesVerified} ok, ${m.filesFailed} failed (${(m.bytes / 1024 / 1024).toFixed(1)} MB)${m.dryRun ? ` (dry run, would download ${(m.bytesPending / 1024 / 1024).toFixed(1)} MB)` : ""}${m.stoppedEarly ? `; stopped early: ${m.stoppedEarly}` : ""}`,
     );
+  }
+  if (s.refile) {
+    const f = Object.entries(s.refile.filed);
+    lines.push(`inbox: ${s.refile.checked} item(s) checked, ${f.length ? `filed ${f.map(([k, v]) => `${k} ${v}`).join(", ")}` : "none filed"}`);
   }
   if (s.leads) {
     const l = s.leads;

@@ -72,10 +72,18 @@ A **new** thread is routed once:
    with an org that has a role, or on a project (`project_parties`). Email addresses that contribute
    nothing fall back to the domain rules in the same file.
 2. Exactly one workspace: the thread is filed there.
-3. Several, or none: `inbox`, plus a `workspace_assignment` review row (the most common candidate
-   suggested, or none).
-4. **phalanx is never assigned automatically**, even from a rule: the thread goes to `inbox` with
+3. Several: `inbox`, plus a `workspace_assignment` review row suggesting the most common one.
+4. None (nobody known is on it): `inbox`, with **no** review row. It waits there until its people
+   are known (below).
+5. **phalanx is never assigned automatically**, even from a rule: the thread goes to `inbox` with
    phalanx suggested.
+
+**Inbox files itself as people become known.** After you approve a new person, add a role, or link
+someone to a company (and once an hour in the worker's `refile` step), every item still in `inbox`
+(texts, email, voice memos, calls, notes, Meet) is routed again by the rules above; one that now maps
+to exactly one workspace is filed there, and any open `workspace_assignment` row for it is closed.
+Only items still in `inbox` are ever moved, so nothing you filed by hand changes, and phalanx is
+never chosen automatically (`server/workspaces/refile.ts`).
 
 Updates keep the thread's workspace (yours, if you moved it). Approving a `workspace_assignment`
 files the thread. `personal` (family and personal threads) and `inbox` are new workspaces and, like

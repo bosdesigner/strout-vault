@@ -8,8 +8,10 @@
 //             Gmail thread grows), by message id
 //   match     senders to parties by E.164 phone / lowercase email; unknown identifiers are queued
 //             for review (item_type new_party), never created
-//   route     new threads to the one workspace their participants map to, else `inbox` + a
-//             workspace_assignment review row; phalanx is never assigned automatically
+//   route     new threads to the one workspace their participants map to, else `inbox`, plus a
+//             workspace_assignment review row when there is a workspace to suggest (several
+//             candidates, or phalanx, which is never assigned automatically). A thread nobody known
+//             is on just waits in inbox: server/workspaces/refile.ts files it once its people are known
 //   write     one interaction per thread (upsert on source + source_ref), one segments row per
 //             message, transcript as "[HH:MM] Name: text" lines, pipeline_status 'ready' and a
 //             fresh pipeline_updated_at so the existing embedding step picks it up
@@ -363,7 +365,7 @@ export function countsOut(s: IngestSummary): Record<string, unknown> {
   };
 }
 
-async function findOwnerParty(pool: pg.Pool, owner: OwnerIdentity): Promise<PartyRef | null> {
+export async function findOwnerParty(pool: pg.Pool, owner: OwnerIdentity): Promise<PartyRef | null> {
   const ids: Identifier[] = [...[...owner.emails].map((value) => ({ kind: "email" as const, value })), ...[...owner.phones].map((value) => ({ kind: "phone" as const, value }))];
   if (!ids.length) return null;
   const m = await matchParties(pool, ids);
@@ -557,7 +559,7 @@ async function ingestOne(
       summary.created++;
       const route = await routeThread(pool, partyIds, participantsRaw.filter((p) => p.kind === "email").map((p) => p.identifier), parties, opts.rules, known);
       summary.routed[route.workspaceId] = (summary.routed[route.workspaceId] ?? 0) + 1;
-      if (route.review) summary.reviewWorkspace++;
+      if (route.review?.suggested) summary.reviewWorkspace++;
     }
     summary.messagesStored += messages.length - (existing?.messages.length ?? 0);
     rememberUnknown(existing?.id ?? null);
@@ -612,7 +614,7 @@ async function ingestOne(
       await db.query(`insert into interaction_participants (interaction_id, party_id, speaker_label, confidence) values ($1, $2, $3, 1) on conflict (interaction_id, party_id) do nothing`, [interactionId, l.id, l.label]);
     }
 
-    if (route?.review) {
+    if (route?.review?.suggested) {
       const dup = await db.query(`select 1 from review_queue where item_type = 'workspace_assignment' and interaction_id = $1`, [interactionId]);
       if (!dup.rowCount) {
         await db.query(`insert into review_queue (item_type, proposal, reason, interaction_id, status) values ('workspace_assignment', $1::jsonb, $2, $3, 'open')`, [
