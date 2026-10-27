@@ -335,7 +335,8 @@ describe("texts from the collector", () => {
     expect(review.rows[0].reason).toMatch(/never assigned automatically/);
     const unknown = await byRef("imessage:iMessage;-;+17135550199:2026-10-20");
     expect(unknown.workspace_id).toBe("inbox");
-    expect((await pool.query(`select proposal from review_queue where item_type = 'workspace_assignment' and interaction_id = $1`, [unknown.id])).rows[0].proposal.workspace_id).toBeNull();
+    // Nobody known on it: it waits in inbox with no review item (it is filed once its people are known).
+    expect((await pool.query(`select 1 from review_queue where item_type = 'workspace_assignment' and interaction_id = $1`, [unknown.id])).rowCount).toBe(0);
     expect((await byRef("imessage:SMS;-;48291:2026-10-20"))).toBeUndefined();
   });
 
@@ -438,6 +439,26 @@ describe("review decisions on message proposals", () => {
     const ok = await owner.agent.post(`/api/review/${ws.id}/decide`).set(csrf()).send({ decision: "approve" });
     expect(ok.status, ok.text).toBe(200);
     expect((await byRef("imessage:iMessage;-;+12145550166:2026-10-20")).workspace_id).toBe("phalanx");
+  });
+
+  it("an Inbox thread is filed once its person is known: approve them, give them a role (phalanx never)", async () => {
+    const ref = "imessage:iMessage;-;+17135550199:2026-10-20";
+    expect((await byRef(ref)).workspace_id).toBe("inbox");
+    const item = (await pool.query(`select id from review_queue where item_type = 'new_party' and proposal->'evidence'->>'identifier' = '+17135550199'`)).rows[0];
+    const approved = await owner.agent.post(`/api/review/${item.id}/decide`).set(csrf()).send({ decision: "approve" });
+    expect(approved.status, approved.text).toBe(200);
+    // Known now, but with no role anywhere: still nothing to file it under.
+    expect((await byRef(ref)).workspace_id).toBe("inbox");
+    const person = Number((await pool.query(`select id from parties where phones @> '{+17135550199}'`)).rows[0].id);
+    // A phalanx role alone never files it.
+    const ph = await owner.agent.post(`/api/parties/${person}/roles`).set(csrf()).send({ workspaceId: "phalanx", role: "prospect" });
+    expect(ph.status, ph.text).toBe(201);
+    expect((await byRef(ref)).workspace_id).toBe("inbox");
+    // With the phalanx role gone, a Strout Architecture role files it.
+    await pool.query(`delete from roles where party_id = $1 and workspace_id = 'phalanx'`, [person]);
+    const sa = await owner.agent.post(`/api/parties/${person}/roles`).set(csrf()).send({ workspaceId: "strout_arch", role: "client" });
+    expect(sa.status, sa.text).toBe(201);
+    expect((await byRef(ref)).workspace_id).toBe("strout_arch");
   });
 });
 

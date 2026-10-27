@@ -3,6 +3,10 @@ import { z } from "zod";
 import type { AppContext } from "../context.ts";
 import { countOpenReview, decideReview, decideReviewBulk, listReview, ReviewError } from "../services/review.ts";
 import { intId, parse, wrap } from "./util.ts";
+import { refileAfterChange } from "../workspaces/refileHook.ts";
+
+/** Approvals that can make a thread's people known; Inbox is re-filed after them. */
+const REFILE_AFTER = new Set(["new_party", "participant_match", "link_party_interaction", "party_edit"]);
 
 export function reviewRouter(ctx: AppContext): Router {
   const r = Router();
@@ -29,7 +33,8 @@ export function reviewRouter(ctx: AppContext): Router {
     wrap(async (req, res) => {
       const body = parse(z.object({ ids: z.array(z.coerce.number().int().positive()).min(1).max(500), decision: z.enum(["approve", "reject"]) }), req.body);
       const out = await decideReviewBulk(ctx.pool, body.ids, body.decision);
-      res.json({ ...out, openCount: await countOpenReview(ctx.pool, null) });
+      const refiled = body.decision === "approve" && out.done ? await refileAfterChange(ctx) : null;
+      res.json({ ...out, refiled, openCount: await countOpenReview(ctx.pool, null) });
     }),
   );
   r.post(
@@ -38,7 +43,9 @@ export function reviewRouter(ctx: AppContext): Router {
       const id = intId(req.params.id);
       const { decision } = parse(z.object({ decision: z.enum(["approve", "reject"]) }), req.body);
       try {
-        res.json(await decideReview(ctx.pool, id, decision));
+        const out = await decideReview(ctx.pool, id, decision);
+        const refiled = decision === "approve" && REFILE_AFTER.has(out.item.itemType) ? await refileAfterChange(ctx) : null;
+        res.json({ ...out, refiled });
       } catch (err) {
         if (err instanceof ReviewError) {
           res.status(err.status).json({ error: err.message });

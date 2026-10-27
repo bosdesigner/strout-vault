@@ -14,6 +14,7 @@ import {
   upsertRole,
 } from "../services/people.ts";
 import { HttpError, intId, parse, wrap } from "./util.ts";
+import { refileAfterChange } from "../workspaces/refileHook.ts";
 import { requireOwner, scopeOf } from "../auth/scope.ts";
 
 const listSchema = z.object({
@@ -104,6 +105,7 @@ export function peopleRouter(ctx: AppContext): Router {
         const ws = await ctx.pool.query(`select 1 from workspaces where id = $1`, [body.role.workspaceId]);
         if (!ws.rowCount) throw new HttpError(400, "unknown workspace");
         await upsertRole(ctx.pool, id, body.role);
+        await refileAfterChange(ctx, [id]);
       }
       res.status(201).json(await getPartyDetail(ctx.pool, id));
     }),
@@ -138,6 +140,7 @@ export function peopleRouter(ctx: AppContext): Router {
       const party = await ctx.pool.query(`select 1 from parties where id = $1`, [id]);
       if (!party.rowCount) throw new HttpError(404, "person not found");
       await upsertRole(ctx.pool, id, body);
+      await refileAfterChange(ctx, [id]);
       res.status(201).json(await getPartyDetail(ctx.pool, id));
     }),
   );
@@ -154,6 +157,7 @@ export function peopleRouter(ctx: AppContext): Router {
       if (!org) throw new HttpError(400, "unknown organization");
       const [personId, orgId] = me.kind === "org" ? [body.orgId, id] : [id, body.orgId];
       await upsertAffiliation(ctx.pool, personId, orgId, body.title ?? null);
+      await refileAfterChange(ctx, [personId]);
       res.status(201).json(await getPartyDetail(ctx.pool, id));
     }),
   );
