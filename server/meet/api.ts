@@ -3,7 +3,7 @@
 // events.list under calendar.events.readonly when that was granted too. A Meet account's refresh
 // token is its own grant, separate from the Gmail one, so Gmail's stays gmail.readonly only.
 import { Readable } from "node:stream";
-import { isRateLimited, RATE_LIMIT_RETRIES, rateLimitWaitMs } from "../messages/gmail/api.ts";
+import { isRateLimited, Pacer, RATE_LIMIT_RETRIES, rateLimitWaitMs } from "../messages/gmail/api.ts";
 
 export const DRIVE_MEET_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.meet.readonly";
 export const CALENDAR_EVENTS_READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.events.readonly";
@@ -68,8 +68,11 @@ export class MeetClient {
   /** What the last token refresh said was granted. */
   scopes: string[] = [];
   calls = 0;
+  private pacer: Pacer;
 
-  constructor(private o: MeetClientOptions) {}
+  constructor(private o: MeetClientOptions) {
+    this.pacer = new Pacer(o.sleep);
+  }
 
   private async token(): Promise<string> {
     if (this.accessToken && Date.now() < this.expiresAt - 60_000) return this.accessToken;
@@ -92,11 +95,16 @@ export class MeetClient {
 
   private async request(url: URL): Promise<Response> {
     for (let attempt = 0; ; attempt++) {
+      await this.pacer.wait();
       this.calls++;
       const res = await this.o.fetchImpl(url, { headers: { authorization: `Bearer ${await this.token()}` } });
-      if (res.ok) return res;
+      if (res.ok) {
+        this.pacer.ok();
+        return res;
+      }
       const text = await res.text().catch(() => "");
       if (isRateLimited(res.status, text) && attempt < RATE_LIMIT_RETRIES) {
+        this.pacer.slowDown();
         await this.o.sleep(rateLimitWaitMs(res.headers.get("retry-after"), attempt));
         continue;
       }
