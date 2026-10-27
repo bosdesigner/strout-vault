@@ -1,0 +1,15 @@
+{
+  "name": "strout-vault-apple-media-collector",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reads Voice Memos, iPhone call recordings (Notes) and Apple Notes read-only on the Mac and sends them to Strout Vault (/api/ingest/device).",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "discover": "node collector.mjs --discover",
+    "dry-run": "node collector.mjs --dry-run",
+    "start": "node collector.mjs"
+  }
+}
