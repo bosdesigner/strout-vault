@@ -1,5 +1,5 @@
 // Ben's hand-written rules for messages, read from YAML so they can be edited without a deploy:
-//   config/message_routing.yml   party id -> workspace, email domain -> workspace
+//   config/message_routing.yml   party id -> workspace, email domain -> workspace, Apple Notes folder -> workspace
 //   config/message_blocklist.yml senders (emails, domains, phones) whose messages are never stored
 // Both files ship with commented examples only; a missing or empty file means "no rules".
 import fs from "node:fs";
@@ -10,6 +10,8 @@ import { normalizeEmail, normalizePhone } from "./identity.ts";
 export interface RoutingRules {
   parties: Map<number, string>;
   domains: Map<string, string>;
+  /** Apple Notes folder name (lowercased) -> workspace, for notes the Mac collector sends. */
+  notesFolders: Map<string, string>;
 }
 
 export interface Blocklist {
@@ -24,7 +26,7 @@ export interface MessageRules {
 }
 
 export function emptyRules(): MessageRules {
-  return { routing: { parties: new Map(), domains: new Map() }, blocklist: { emails: new Set(), domains: new Set(), phones: new Set() } };
+  return { routing: { parties: new Map(), domains: new Map(), notesFolders: new Map() }, blocklist: { emails: new Set(), domains: new Set(), phones: new Set() } };
 }
 
 function readYaml(file: string): Record<string, unknown> {
@@ -38,7 +40,7 @@ function readYaml(file: string): Record<string, unknown> {
 const WS_ID = /^[a-z0-9_-]{1,100}$/;
 
 export function parseRouting(doc: Record<string, unknown>): RoutingRules {
-  const out: RoutingRules = { parties: new Map(), domains: new Map() };
+  const out: RoutingRules = { parties: new Map(), domains: new Map(), notesFolders: new Map() };
   const parties = (doc.parties ?? {}) as Record<string, unknown>;
   for (const [k, v] of Object.entries(parties)) {
     const id = Number(k);
@@ -50,6 +52,11 @@ export function parseRouting(doc: Record<string, unknown>): RoutingRules {
   for (const [k, v] of Object.entries(domains)) {
     if (typeof v !== "string" || !WS_ID.test(v)) throw new Error(`message_routing.yml: domain ${k} maps to an invalid workspace id`);
     out.domains.set(k.trim().toLowerCase().replace(/^@/, ""), v);
+  }
+  const folders = (doc.apple_notes_folders ?? {}) as Record<string, unknown>;
+  for (const [k, v] of Object.entries(folders)) {
+    if (typeof v !== "string" || !WS_ID.test(v)) throw new Error(`message_routing.yml: notes folder ${k} maps to an invalid workspace id`);
+    out.notesFolders.set(k.trim().toLowerCase(), v);
   }
   return out;
 }

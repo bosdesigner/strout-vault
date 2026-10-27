@@ -1,4 +1,4 @@
-import { Mic, Phone, PhoneForwarded, Upload, Video } from "lucide-react";
+import { Mail, MessageSquare, Mic, NotebookText, Phone, PhoneForwarded, Upload, Video } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SOURCE_LABEL } from "@/lib/format";
 
@@ -10,6 +10,9 @@ export function SourceIcon({ source, className }: { source: string | null | unde
     source === "iphone_call" ? <Phone className={cls} aria-hidden /> :
     source === "contractor_call" ? <PhoneForwarded className={cls} aria-hidden /> :
     source === "upload" ? <Upload className={cls} aria-hidden /> :
+    source === "apple_note" ? <NotebookText className={cls} aria-hidden /> :
+    source === "imessage" ? <MessageSquare className={cls} aria-hidden /> :
+    source === "gmail" ? <Mail className={cls} aria-hidden /> :
     <Mic className={cls} aria-hidden />;
   return (
     <span className="inline-flex items-center text-muted-foreground" title={label} aria-label={label}>

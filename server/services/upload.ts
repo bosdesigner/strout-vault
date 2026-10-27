@@ -37,6 +37,7 @@ const SOURCE_KIND: Record<UploadFinishInput["source"], string> = {
   upload: "other",
   iphone_call: "call",
   contractor_call: "call",
+  voice_memo: "recording",
 };
 
 /**
@@ -74,6 +75,11 @@ export async function finishUpload(
   try {
     await client.query("begin");
     const dup = await client.query(`select id, interaction_id from media where sha256 = $1 limit 1`, [input.sha256.toLowerCase()]);
+    // A device item already filed under its own id (the Mac collector re-sending an edited file's twin).
+    if (!dup.rows[0] && input.sourceRef) {
+      const ref = await client.query(`select id as interaction_id, media_id as id from interactions where source = $1 and source_ref = $2`, [input.source, input.sourceRef]);
+      if (ref.rows[0]) dup.rows.push(ref.rows[0]);
+    }
     if (dup.rows[0]) {
       await client.query("rollback");
       const t = dup.rows[0].interaction_id
@@ -87,11 +93,15 @@ export async function finishUpload(
     const title = input.title.trim() || input.originalFilename;
     const inter = await client.query(
       `insert into interactions (workspace_id, kind, occurred_at, title, source, original_filename, content_sha256,
+                                 source_ref, duration_sec, participants_raw, source_payload,
                                  pipeline_status, pipeline_updated_at, updated_at)
-       values ($1, $2, $3, $4, $5, $6, $7, 'queued', now(), now())
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, 'queued', now(), now())
        returning id`,
       [input.workspaceId || null, SOURCE_KIND[input.source], recordedAt.toISOString(), title, input.source,
-       input.originalFilename, input.sha256.toLowerCase()],
+       input.originalFilename, input.sha256.toLowerCase(), input.sourceRef ?? null,
+       input.durationSec != null && Number.isFinite(input.durationSec) ? input.durationSec : null,
+       input.participantsRaw ? JSON.stringify(input.participantsRaw) : null,
+       input.sourcePayload ? JSON.stringify(input.sourcePayload) : null],
     );
     const interactionId: number = inter.rows[0].id;
 
@@ -143,10 +153,24 @@ export async function finishUpload(
     }
     const code = (err as { code?: string }).code;
     if (code === "23503") throw new UploadError(400, "unknown_reference", "a workspace or person on this upload does not exist");
+    // Two sends of the same device item racing each other: the unique indexes on (source, source_ref)
+    // and media_device_sha let exactly one through; the other is the duplicate it is.
+    if (code === "23505") {
+      const again = await findDuplicate(pool, input);
+      if (again) throw new UploadError(409, "duplicate", "Already in the vault", { duplicate: again });
+    }
     throw err;
   } finally {
     client.release();
   }
+}
+
+async function findDuplicate(pool: pg.Pool, input: UploadFinishInput): Promise<DuplicateInfo | null> {
+  const bySha = await findDuplicateBySha(pool, input.sha256);
+  if (bySha) return bySha;
+  if (!input.sourceRef) return null;
+  const { rows } = await pool.query(`select id, media_id, title from interactions where source = $1 and source_ref = $2`, [input.source, input.sourceRef]);
+  return rows[0] ? { mediaId: rows[0].media_id, interactionId: rows[0].id, title: rows[0].title } : null;
 }
 
 export function kindFromMime(mime: string | null | undefined, filename: string): "video" | "audio" {

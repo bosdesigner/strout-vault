@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusChip } from "@/components/StatusChip";
+import { SourcesPanel } from "@/components/SourcesPanel";
 
 interface Run {
   id: number;
@@ -107,9 +108,11 @@ export default function PipelinePage() {
       <header className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Pipeline</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          The worker runs every hour: it pulls new Zoom recordings into storage, transcribes what is waiting, and reports here. Nothing is ever deleted.
+          The worker runs every hour: it pulls new Zoom and Google Meet recordings into storage, transcribes what is waiting, and reports here. Nothing is ever deleted.
         </p>
       </header>
+
+      <SourcesPanel />
 
       <section aria-label="Status" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card title="Last run" icon={last?.ok === false ? <AlertTriangle className="h-4 w-4 text-destructive" /> : <CheckCircle2 className="h-4 w-4 text-emerald-600" />}>
@@ -139,7 +142,7 @@ export default function PipelinePage() {
             {d.config.groqConfigured ? `of $${d.config.groqBudgetUsd.toFixed(2)} Groq budget for ${r.spend.month}` : "Groq is off: Zoom transcripts only"}
           </p>
         </Card>
-        <Card title="Sources">
+        <Card title="Worker setup">
           <ul className="space-y-1 text-sm">
             <li className="flex items-center justify-between gap-2">
               <span>Zoom</span>

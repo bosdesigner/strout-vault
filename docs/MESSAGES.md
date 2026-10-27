@@ -86,6 +86,8 @@ them on every import.
 
 ## Turning it on
 
+(These steps are also in [`docs/INGEST.md`](INGEST.md), the one checklist for every ingest point.)
+
 1. Apply `db/migrations/0009_messages.sql` (after 0008) in the Neon SQL editor. It widens the
    `interactions.kind` check, adds the `personal` and `inbox` workspaces, `api_tokens.scopes`,
    `message_accounts`, and three indexes. `/api/health` then reports `v0.9`.

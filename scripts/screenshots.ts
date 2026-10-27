@@ -9,7 +9,8 @@ const BASE = process.env.BASE_URL ?? "http://localhost:3000";
 const EMAIL = process.env.SCREENSHOT_EMAIL ?? "dev@strout.local";
 const PASSWORD = process.env.SCREENSHOT_PASSWORD ?? "vault-dev-password";
 const PHASE = process.env.SCREENSHOT_PHASE ?? "phase-1";
-const OUT = path.resolve(`docs/screenshots/${PHASE}`);
+// SCREENSHOT_PHASE=ingest: the Sources panel (after `npm run sources:demo`) into docs/ingest-verification.
+const OUT = path.resolve(PHASE === "ingest" ? "docs/ingest-verification" : `docs/screenshots/${PHASE}`);
 fs.mkdirSync(OUT, { recursive: true });
 
 const SIZES = [
@@ -177,7 +178,32 @@ async function runPhase5(browser: Browser) {
   }
 }
 
+async function runIngest(browser: Browser) {
+  for (const size of SIZES) {
+    for (const dark of [false, true]) {
+      if (dark && size.mobile) continue;
+      const ctx = await browser.newContext({
+        viewport: { width: size.width, height: size.height },
+        deviceScaleFactor: size.mobile ? 2 : 1,
+        isMobile: size.mobile,
+        hasTouch: size.mobile,
+        colorScheme: dark ? "dark" : "light",
+      });
+      const page = await ctx.newPage();
+      await login(page);
+      await page.goto(`${BASE}/pipeline`);
+      await page.getByTestId("sources-panel").locator(size.mobile ? "li[data-status]" : "tr[data-status]").first().waitFor();
+      await settle(page);
+      const file = path.join(OUT, `sources-panel${dark ? "-dark" : ""}-${size.name}.png`);
+      await page.getByTestId("sources-panel").screenshot({ path: file });
+      console.log(path.relative(process.cwd(), file));
+      await ctx.close();
+    }
+  }
+}
+
 async function run(browser: Browser) {
+  if (PHASE === "ingest") return runIngest(browser);
   if (PHASE === "phase-2") return runPhase2(browser);
   if (PHASE === "phase-3") return runPhase3(browser);
   if (PHASE === "phase-4") return runPhase4(browser);
@@ -268,7 +294,7 @@ async function run(browser: Browser) {
   }
 }
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {});
 try {
   await run(browser);
 } finally {

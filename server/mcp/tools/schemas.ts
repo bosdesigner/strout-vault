@@ -9,6 +9,6 @@ export const sinceArg = z.string().regex(/^\d{4}-\d{2}-\d{2}/, "YYYY-MM-DD or an
 export const untilArg = z.string().regex(/^\d{4}-\d{2}-\d{2}/, "YYYY-MM-DD or an ISO timestamp").optional().describe("Only interactions before this date (YYYY-MM-DD or ISO 8601, exclusive).");
 export const limitArg = z.coerce.number().int().min(1).optional().describe("Maximum results (default 20; anything above 50 is clamped to 50).");
 export const kindArg = z
-  .enum(["call", "meeting", "email", "text", "in_person", "other", "text_thread", "email_thread"])
+  .enum(["call", "meeting", "email", "text", "in_person", "other", "text_thread", "email_thread", "recording", "note"])
   .optional()
-  .describe("Interaction kind: meeting (Zoom), call (phone), other (uploads), text_thread (one iMessage/SMS conversation on one day), email_thread (one Gmail thread).");
+  .describe("Interaction kind: meeting (Zoom, Google Meet), call (phone: contractor lines and iPhone call recordings), other (uploads), recording (a Voice Memo), note (an Apple Note, text only), text_thread (one iMessage/SMS conversation on one day), email_thread (one Gmail thread).");

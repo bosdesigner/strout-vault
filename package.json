@@ -24,10 +24,12 @@
     "mcp:semantic-check": "tsx scripts/semantic-check.ts",
     "workspaces:propose": "tsx scripts/propose-workspaces.ts",
     "messages:gmail": "tsx scripts/gmail-backfill.ts",
+    "messages:meet": "tsx scripts/meet-backfill.ts",
     "hash-password": "tsx scripts/hash-password.ts",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "screenshots": "tsx scripts/screenshots.ts"
+    "screenshots": "tsx scripts/screenshots.ts",
+    "sources:demo": "tsx scripts/sources-demo.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",

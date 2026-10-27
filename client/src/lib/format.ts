@@ -22,6 +22,10 @@ export const SOURCE_LABEL: Record<string, string> = {
   upload: "Upload",
   iphone_call: "Phone call",
   contractor_call: "Contractor call",
+  voice_memo: "Voice memo",
+  apple_note: "Apple Note",
+  imessage: "Texts",
+  gmail: "Email",
 };
 
 export const STATUS_LABEL: Record<string, string> = {

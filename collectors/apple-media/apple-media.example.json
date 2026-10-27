@@ -1,0 +1,10 @@
+{
+  "include_voice_memos": true,
+  "include_call_recordings": true,
+  "include_notes": true,
+  "skip_folders": ["Private"],
+  "allow_folders": null,
+  "call_recordings_folder": "Call Recordings",
+  "min_note_chars": 40,
+  "min_memo_seconds": 5
+}

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Strout Vault Apple media collector (Voice Memos, call recordings, Notes), every 10 minutes.
+  Copy to ~/Library/LaunchAgents/, replace the three REPLACE_ME values (see README.md), then:
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.stroutvault.apple-media.plist
+  The token is NOT in this file: the collector reads it from the login Keychain
+  (service "strout-vault", account "apple-media"). The collector writes its own rotating log to
+  ~/Library/Logs/strout-vault-apple-media.log; the file below only catches crashes.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.stroutvault.apple-media</string>
+  <key>ProgramArguments</key>
+  <array>
+    <!-- The exact node binary that was granted Full Disk Access (the same one as the iMessage collector). -->
+    <string>REPLACE_ME_NODE_PATH</string>
+    <string>REPLACE_ME_REPO/collectors/apple-media/collector.mjs</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>STROUT_VAULT_URL</key>
+    <string>REPLACE_ME_URL</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>600</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/dev/null</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/strout-vault-apple-media.err.log</string>
+</dict>
+</plist>

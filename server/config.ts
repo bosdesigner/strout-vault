@@ -116,6 +116,13 @@ const envSchema = z.object({
   GOOGLE_OAUTH_AUTHORIZE_URL: z.string().default("https://accounts.google.com/o/oauth2/v2/auth"),
   GOOGLE_OAUTH_TOKEN_URL: z.string().default("https://oauth2.googleapis.com/token"),
   GMAIL_API_BASE: z.string().default("https://gmail.googleapis.com/gmail/v1"),
+  // Google Meet (docs/INGEST.md): the same OAuth client, a separate grant per account with
+  // drive.meet.readonly (+ calendar.events.readonly when connected with ?calendar=1).
+  // Authorized redirect URI: <PUBLIC_URL>/api/messages/meet/callback
+  DRIVE_API_BASE: z.string().default("https://www.googleapis.com/drive/v3"),
+  CALENDAR_API_BASE: z.string().default("https://www.googleapis.com/calendar/v3"),
+  // Include recordings that live in Workspace shared drives (corpora=allDrives). "0" for My Drive only.
+  MEET_SHARED_DRIVES: z.enum(["0", "1"]).default("1"),
   // Days the first backfill reaches back (npm run messages:gmail -- --since overrides it).
   GMAIL_BACKFILL_DAYS: z.coerce.number().int().positive().default(365),
   // Worker steps to run when no --steps argument is given (the 10-minute messages deployment sets "gmail,embed").

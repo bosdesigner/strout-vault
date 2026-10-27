@@ -5,6 +5,7 @@ import { buildReport } from "../worker/report.ts";
 import { formatRunSummary, type RunSummary } from "../worker/run.ts";
 import { HttpError, parse, wrap } from "./util.ts";
 import { embeddingStatus } from "../embeddings/pipeline.ts";
+import { buildSources } from "../services/sources.ts";
 
 /** Owner-only: what the hourly worker did, what is waiting, and a Retry button. */
 export function pipelineRouter(ctx: AppContext): Router {
@@ -93,6 +94,14 @@ export function pipelineRouter(ctx: AppContext): Router {
           lastRun: stateMap.last_run ?? null,
         },
       });
+    }),
+  );
+
+  // Every ingest point's health, from the tables each one writes (the Sources panel).
+  r.get(
+    "/sources",
+    wrap(async (_req, res) => {
+      res.json(await buildSources(ctx.pool, ctx.config));
     }),
   );
 
