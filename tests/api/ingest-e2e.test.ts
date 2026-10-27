@@ -250,7 +250,7 @@ describe.skipIf(!SQLITE_AVAILABLE)("end to end: one voice memo, two call recordi
     expect(fs.existsSync(path.join(tmp, "state.json"))).toBe(false);
     const run = await collector(["--backfill"]);
     expect(run.status, run.stderr + run.stdout).toBe(0);
-    expect(run.stdout).toMatch(/done \(run \d+\): voice_memo created 1; iphone_call created 2; apple_note created 2/);
+    expect(run.stdout).toMatch(/done \(run \d+\): voice_memo created 1; iphone_call created 3; apple_note created 2/);
     for (const secret of ["drone pass", "Porch idea", "Woodlands porch", "cypress"]) {
       expect(run.stdout).not.toContain(secret);
       expect(fs.readFileSync(path.join(tmp, "collector.log"), "utf8")).not.toContain(secret);
@@ -261,10 +261,10 @@ describe.skipIf(!SQLITE_AVAILABLE)("end to end: one voice memo, two call recordi
   it("a second run sends nothing; a run with a lost state file finds everything already in the vault", async () => {
     const again = await collector([]);
     expect(again.status, again.stderr).toBe(0);
-    expect(again.stdout, again.stdout).toMatch(/voice_memo none; iphone_call none; apple_note none; already sent voice_memo 1, iphone_call 2, apple_note 2/);
+    expect(again.stdout, again.stdout).toMatch(/voice_memo none; iphone_call none; apple_note none; already sent voice_memo 1, iphone_call 3, apple_note 2/);
     fs.rmSync(path.join(tmp, "state.json"));
     const fresh = await collector(["--backfill"]);
-    expect(fresh.stdout).toMatch(/voice_memo duplicate 1; iphone_call duplicate 2; apple_note unchanged 2/);
+    expect(fresh.stdout).toMatch(/voice_memo duplicate 1; iphone_call duplicate 3; apple_note unchanged 2/);
     expect(sums()).toEqual(before);
   });
 
@@ -275,6 +275,7 @@ describe.skipIf(!SQLITE_AVAILABLE)("end to end: one voice memo, two call recordi
       ["apple_note", "note", "apple_note:NOTE-0017-AUDI", "another_story"],
       ["iphone_call", "call", "notes:NOTE-0015-CALL:ATT-0200-CALL", "another_story"],
       ["iphone_call", "call", "notes:NOTE-0016-CALL:ATT-0201-CALL", "inbox"],
+      ["iphone_call", "call", "notes:NOTE-0018-CALL:ATT-0203-CALL", "inbox"],
       ["voice_memo", "recording", "voice_memo:A1B2C3D4-0000-4000-8000-000000000001", "inbox"],
     ]);
     const kevin = rows.find((r) => r.source_ref.includes("NOTE-0015"))!;
@@ -284,7 +285,7 @@ describe.skipIf(!SQLITE_AVAILABLE)("end to end: one voice memo, two call recordi
     expect(daniel.rows[0].proposal.workspace_id).toBe("phalanx");
     const runs = (await pool.query(`select source, ok, counts_out from import_runs where source = 'apple_media' order by id`)).rows;
     expect(runs).toHaveLength(3);
-    expect(runs[0].counts_out).toEqual({ created: { voice_memo: 1, iphone_call: 2, apple_note: 2 } });
+    expect(runs[0].counts_out).toEqual({ created: { voice_memo: 1, iphone_call: 3, apple_note: 2 } });
     expect(runs.every((r) => r.ok)).toBe(true);
   });
 
@@ -317,7 +318,7 @@ describe.skipIf(!SQLITE_AVAILABLE)("end to end: one voice memo, two call recordi
     const r = await runWorker(ctx(), { trigger: "test", steps: ["transcribe", "embed"] });
     expect(r.ok, JSON.stringify(r.summary)).toBe(true);
     // The seed's own queued recordings (no readable media) are candidates too; ours are the four done.
-    expect(r.summary.transcribe).toMatchObject({ done: 4, viaGroq: 3, viaMeetTranscript: 1 });
+    expect(r.summary.transcribe).toMatchObject({ done: 5, viaGroq: 4, viaMeetTranscript: 1 });
     const rows = (await pool.query(
       `select i.id, i.source, i.kind, i.source_ref, i.workspace_id, i.title, i.pipeline_status, t.source as transcript_source, i.embedded_at is not null as embedded,
               (select count(*)::int from segments s where s.interaction_id = i.id) as segments, (select count(*)::int from chunks c where c.interaction_id = i.id) as chunks
@@ -326,7 +327,7 @@ describe.skipIf(!SQLITE_AVAILABLE)("end to end: one voice memo, two call recordi
     )).rows;
     expect(rows.every((x) => x.pipeline_status === "ready")).toBe(true);
     expect(rows.every((x) => x.embedded && x.chunks > 0)).toBe(true);
-    expect(rows.filter((x) => x.source !== "apple_note").map((x) => x.transcript_source).sort()).toEqual(["groq", "groq", "groq", "meet_doc"]);
+    expect(rows.filter((x) => x.source !== "apple_note").map((x) => x.transcript_source).sort()).toEqual(["groq", "groq", "groq", "groq", "meet_doc"]);
     const meet = rows.find((x) => x.source === "meet")!;
     const segs = (await pool.query(`select speaker, speaker_party_id from segments where interaction_id = $1 order by idx`, [meet.id])).rows;
     expect(segs.map((s) => s.speaker)).toEqual(["Ben Strout", "Kevin McGuire", "Ben Strout", "Kevin McGuire"]);

@@ -34,6 +34,7 @@ export interface CollectorConfig {
   skip_folders: string[];
   allow_folders: string[] | null;
   call_recordings_folder: string;
+  call_title_detection: boolean;
   min_note_chars: number;
   min_memo_seconds: number;
 }
@@ -90,6 +91,7 @@ export interface CallRecording {
   skip: "locked" | "deleted" | "not_downloaded" | null;
 }
 export function readNotes(db: DatabaseSync, notesDir: string, cfg?: CollectorConfig): { notes: TextNote[]; recordings: CallRecording[]; otherAudio: number; folders: string[] };
+export const CALL_TITLE: RegExp;
 export function participantFromTitle(title: string | null): { name: string | null; phone: string | null } | null;
 export function findMediaFile(notesDir: string, accountId: string | null, mediaId: string | null, filename: string | null): string | null;
 export function discover(paths?: ApplePaths): string;

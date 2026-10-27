@@ -275,7 +275,7 @@ async function main() {
       const bytes = plan[src].reduce((n, it) => n + (it.bytes ?? Buffer.byteLength(it.text ?? "", "utf8")), 0);
       console.log(`  ${src.padEnd(12)} ${String(plan[src].length).padStart(10)} ${String(bytes).padStart(14)} ${String(already[src]).padStart(12)}  ${fmtCounts(found.skipped[src])}`);
     }
-    if (found.otherAudio) console.log(`  (${found.otherAudio} audio attachment(s) in Notes folders other than "${cfg.call_recordings_folder}" are never sent)`);
+    if (found.otherAudio) console.log(`  (${found.otherAudio} other audio attachment(s) in Notes, not call recordings, are never sent)`);
     if (found.found.voice_memo === false) console.log("  Voice Memos: no CloudRecordings.db found (run --discover)");
     if (found.found.notes === false) console.log("  Notes: no NoteStore.sqlite found (run --discover)");
     return;

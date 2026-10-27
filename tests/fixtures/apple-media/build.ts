@@ -65,10 +65,12 @@ export function buildAppleFixtures(root: string, opts: { legacy?: boolean; broke
   const callMedia = "MEDIA-CALL-0001";
   const call2Media = "MEDIA-CALL-0002";
   const otherMedia = "MEDIA-OTHER-0001";
+  const call3Media = "MEDIA-CALL-0003";
   tone(path.join(notesDir, "Accounts", accountId, "Media", callMedia, "1_7A2B", "Call with Kevin McGuire.m4a"), 660, 8);
   tone(path.join(notesDir, "Accounts", accountId, "Media", call2Media, "1_9C3D", "Call.m4a"), 700, 5);
   tone(path.join(notesDir, "Accounts", accountId, "Media", otherMedia, "Audio.m4a"), 900, 3);
-  for (const d of [callMedia, call2Media, otherMedia]) {
+  tone(path.join(notesDir, "Accounts", accountId, "Media", call3Media, "1_4E5F", "Call Recording.m4a"), 740, 5);
+  for (const d of [callMedia, call2Media, otherMedia, call3Media]) {
     const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]));
     files.push(...walk(path.join(notesDir, "Accounts", accountId, "Media", d)));
   }
@@ -105,6 +107,8 @@ export function buildAppleFixtures(root: string, opts: { legacy?: boolean; broke
   note(15, "NOTE-0015-CALL", "Call with Kevin McGuire", 4, "Call with Kevin McGuire\nKevin: The drone pass has to happen before nine.\nBen: Then we start at sunrise.\n￼", { createdAt: "2026-10-21T15:04:05Z" });
   note(16, "NOTE-0016-CALL", "+1 (214) 555-0166", 4, "+1 (214) 555-0166\n￼", { createdAt: "2026-10-21T18:30:00Z" });
   note(17, "NOTE-0017-AUDI", "Shoot day voice note", 6, "Shoot day voice note with an audio attachment and enough words to be sent as a note.￼");
+  // Where iOS files a call when there is no Call Recordings folder: the main Notes folder, titled "Call Recording".
+  note(18, "NOTE-0018-CALL", "Call Recording", 2, "Call Recording\n\uFFFC", { createdAt: "2026-10-22T13:10:00Z" });
   // attachments (audio) and their media rows
   const attach = (pk: number, id: string, notePk: number, mediaPk: number, duration: number, transcript: string | null) =>
     obj.run(pk, id, null, null, null, null, null, null, null, 0, 0, null, "com.apple.m4a-audio", notePk, mediaPk, null, duration, transcript);
@@ -112,9 +116,11 @@ export function buildAppleFixtures(root: string, opts: { legacy?: boolean; broke
   media(100, callMedia, "Call with Kevin McGuire.m4a");
   media(101, call2Media, "Call.m4a");
   media(102, otherMedia, "Audio.m4a");
+  media(103, call3Media, "Call Recording.m4a");
   attach(200, "ATT-0200-CALL", 15, 100, 8, "Kevin: The drone pass has to happen before nine. Ben: Then we start at sunrise.");
   attach(201, "ATT-0201-CALL", 16, 101, 5, null);
   attach(202, "ATT-0202-AUDI", 17, 102, 3, null);
+  attach(203, "ATT-0203-CALL", 18, 103, 5, null);
   ns.close();
   files.push(path.join(voiceMemosDir, "CloudRecordings.db"), path.join(notesDir, "NoteStore.sqlite"));
   return { root, voiceMemosDir, notesDir, files: files.sort() };

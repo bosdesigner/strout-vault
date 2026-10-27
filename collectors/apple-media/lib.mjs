@@ -68,8 +68,14 @@ export const DEFAULT_CONFIG = {
   skip_folders: ["Private"],
   /** When set, only these Notes folders are sent (call recordings are not affected). */
   allow_folders: null,
-  /** The Notes folder iOS saves call recordings in. */
+  /** The Notes folder iOS saves call recordings in (when it makes one). */
   call_recordings_folder: "Call Recordings",
+  /**
+   * Also treat a note as a call recording, in any folder, when it has audio and its title starts
+   * with "Call" ("Call with Kevin McGuire", "Call Recording"): where iOS files them when there is no
+   * Call Recordings folder.
+   */
+  call_title_detection: true,
   /** Notes shorter than this (characters, after trimming) are not sent. */
   min_note_chars: 40,
   /** Voice memos shorter than this are not sent. */
@@ -389,7 +395,8 @@ export function readNotes(db, notesDir, cfg = DEFAULT_CONFIG) {
     };
     const gone = Number(n.deleted) === 1 || folder?.trash;
     const audio = audioByNote.get(Number(n.pk)) ?? [];
-    if (lower(folderTitle) === callFolder && audio.length) {
+    const isCall = audio.length > 0 && (lower(folderTitle) === callFolder || (cfg.call_title_detection !== false && CALL_TITLE.test(String(base.title ?? ""))));
+    if (isCall) {
       const text = decodeNoteBody(n.data);
       for (const a of audio) {
         const file = findMediaFile(notesDir, accounts.get(Number(n.account)) ?? null, a.media_id ? String(a.media_id) : null, a.media_file ? String(a.media_file) : null);
@@ -443,6 +450,8 @@ function appleTranscript(indexable, noteText) {
 }
 
 const PHONE = /^\+?[\d\s().-]{7,20}$/;
+/** iOS's call-recording note titles: "Call with Kevin McGuire", "Call Recording", "Call". */
+export const CALL_TITLE = /^\s*call(\s+(with|recording)\b|\s*$)/i;
 
 /** "Call with Kevin McGuire", "Kevin McGuire", "+1 (936) 555-0142" -> { name, phone }. */
 export function participantFromTitle(title) {
@@ -562,7 +571,7 @@ export function discover(paths = defaultPaths()) {
         const perFolder = countBy([...r.notes.map((n) => n.folder ?? "(no folder)"), ...callNotes.map((f) => f ?? "(no folder)")]);
         say(`    folders (notes per folder; use these names in ~/.strout-vault/apple-media.json):`);
         for (const [f, n] of Object.entries(perFolder).sort((a, b) => b[1] - a[1])) say(`      ${f}: ${n}`);
-        say(`    extractor: OK (${r.notes.length} text note(s): ${fmtCounts(countBy(r.notes.map((n) => n.skip ?? "ok")))}; ${r.recordings.length} call recording(s) in "${DEFAULT_CONFIG.call_recordings_folder}": ${fmtCounts(countBy(r.recordings.map((n) => n.skip ?? "ok")))}; ${r.otherAudio} audio attachment(s) in other folders, not sent)`);
+        say(`    extractor: OK (${r.notes.length} text note(s): ${fmtCounts(countBy(r.notes.map((n) => n.skip ?? "ok")))}; ${r.recordings.length} call recording(s) (folder "${DEFAULT_CONFIG.call_recordings_folder}" or a title starting "Call"): ${fmtCounts(countBy(r.recordings.map((n) => n.skip ?? "ok")))}; ${r.otherAudio} other audio attachment(s), not sent)`);
       } catch (err) {
         say(`    extractor: ${err instanceof SchemaError ? "SCHEMA MISMATCH: " : "ERROR: "}${err.message}`);
       }
