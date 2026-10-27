@@ -37,6 +37,8 @@ export interface GmailClientOptions {
   refreshToken: string;
   fetchImpl: typeof fetch;
   sleep: (ms: number) => Promise<void>;
+  /** Says when Google asks it to slow down (counts only). */
+  log?: (line: string) => void;
 }
 
 export class GmailClient {
@@ -73,7 +75,9 @@ export class GmailClient {
       // Quota: Gmail answers 429, or 403 "Quota exceeded … per minute per user" / rateLimitExceeded.
       // The per-minute window resets within a minute, so wait it out instead of failing the run.
       if (isRateLimited(res.status, text) && attempt < RATE_LIMIT_RETRIES) {
-        await this.o.sleep(rateLimitWaitMs(res.headers.get("retry-after"), attempt));
+        const wait = rateLimitWaitMs(res.headers.get("retry-after"), attempt);
+        this.o.log?.(`gmail: Google's per-minute quota reached; waiting ${Math.round(wait / 1000)} s (try ${attempt + 1} of ${RATE_LIMIT_RETRIES})`);
+        await this.o.sleep(wait);
         continue;
       }
       // Transient server errors: back off a few times, then give up for this run.
