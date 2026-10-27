@@ -150,6 +150,9 @@ describe.skipIf(!SQLITE_AVAILABLE)("fixture databases", () => {
     expect(long.folder).toBe("Notes");
     expect(r.notes.find((n) => n.id === "NOTE-0011-PRIV")!.text).toBeNull();
     expect(r.otherAudio).toBe(1);
+    // Kevin's call is stored twice by iOS; it is sent once, as the exported .m4a, with the raw copy's duration.
+    expect(r.duplicateCopies).toBe(1);
+    expect(r.recordings.filter((c) => c.noteId === "NOTE-0015-CALL")).toHaveLength(1);
     expect(sums(fx.files)).toEqual(before);
   });
 
@@ -197,8 +200,9 @@ describe.skipIf(!SQLITE_AVAILABLE)("fixture databases", () => {
     expect(out).toContain("Call Recordings: 2");
     expect(out).toContain("Notes: 4");
     expect(out).toContain("extractor: OK (4 recording(s)");
-    expect(out).toMatch(/3 call recording\(s\) \(folder "Call Recordings" or a title starting "Call"\): ok 3/);
+    expect(out).toMatch(/3 call recording\(s\) \(folder "Call Recordings" or a title starting "Call"\): ok 3, 1 duplicate copies skipped/);
     expect(out).toContain("com.apple.m4a-audio 4");
+    expect(out).toContain("public.mpeg-4-audio 1");
     expect(out).toContain(`${path.join(tmp, "nope")}: not found`);
     for (const secret of [LONG_NOTE.slice(0, 30), PRIVATE_NOTE.slice(0, 30), "drone pass", "Porch idea"]) expect(out).not.toContain(secret);
     expect(sums(fx.files)).toEqual(before);
@@ -219,6 +223,7 @@ describe.skipIf(!SQLITE_AVAILABLE)("fixture databases", () => {
     expect(out).toMatch(/iphone_call\s+3\s+\d+\s+0\s+none/);
     expect(out).toMatch(/apple_note\s+2\s+\d+\s+0\s+folder_skipped 1, short 1, locked 1, deleted 1/);
     expect(out).toContain("1 other audio attachment(s) in Notes, not call recordings, are never sent");
+    expect(out).toContain("1 raw \"moments\" copies of call recordings skipped");
     for (const secret of [LONG_NOTE.slice(0, 30), PRIVATE_NOTE.slice(0, 30), "drone pass", "Porch idea", "Kevin"]) expect(out).not.toContain(secret);
     expect(fs.existsSync(state)).toBe(false);
     expect(sums(fx.files)).toEqual(before);

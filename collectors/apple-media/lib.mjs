@@ -363,7 +363,8 @@ export function readNotes(db, notesDir, cfg = DEFAULT_CONFIG) {
               ${duration ? `a.${duration}` : "null"} as duration, ${indexable ? `a.${indexable}` : "null"} as indexable,
               m.ZIDENTIFIER as media_id, ${filename ? "m.ZFILENAME" : "null"} as media_file
          from ZICCLOUDSYNCINGOBJECT a left join ZICCLOUDSYNCINGOBJECT m on m.Z_PK = a.ZMEDIA
-        where a.ZNOTE is not null and a.ZTYPEUTI is not null`,
+        where a.ZNOTE is not null and a.ZTYPEUTI is not null
+        order by a.Z_PK`,
     )
     .all();
   const audioByNote = new Map();
@@ -383,6 +384,7 @@ export function readNotes(db, notesDir, cfg = DEFAULT_CONFIG) {
   const notes = [];
   const recordings = [];
   let otherAudio = 0;
+  let duplicateCopies = 0;
   for (const n of noteRows) {
     const folder = folders.get(Number(n.folder)) ?? null;
     const folderTitle = folder?.title ?? null;
@@ -398,7 +400,16 @@ export function readNotes(db, notesDir, cfg = DEFAULT_CONFIG) {
     const isCall = audio.length > 0 && (lower(folderTitle) === callFolder || (cfg.call_title_detection !== false && CALL_TITLE.test(String(base.title ?? ""))));
     if (isCall) {
       const text = decodeNoteBody(n.data);
-      for (const a of audio) {
+      // iOS keeps each call twice: the raw "moments_…-audio.MOV" (which carries the duration) and the
+      // exported "Call with ….m4a". Send the export once per call, with its twin's duration.
+      const raw = audio.filter((a) => MOMENTS_FILE.test(String(a.media_file ?? "")));
+      const exported = audio.filter((a) => !MOMENTS_FILE.test(String(a.media_file ?? "")));
+      const calls = exported.length && raw.length ? exported : audio;
+      duplicateCopies += audio.length - calls.length;
+      calls.forEach((a, i) => {
+        if (!(Number(a.duration) > 0) && calls === exported && raw[i] && Number(raw[i].duration) > 0) a.duration = raw[i].duration;
+      });
+      for (const a of calls) {
         const file = findMediaFile(notesDir, accounts.get(Number(n.account)) ?? null, a.media_id ? String(a.media_id) : null, a.media_file ? String(a.media_file) : null);
         let bytes = null;
         if (file) bytes = fs.statSync(file).size;
@@ -437,7 +448,7 @@ export function readNotes(db, notesDir, cfg = DEFAULT_CONFIG) {
     }
     notes.push({ ...base, text: skip ? null : text.trim(), skip });
   }
-  return { notes, recordings, otherAudio, folders: [...folders.values()].map((f) => f.title) };
+  return { notes, recordings, otherAudio, duplicateCopies, folders: [...folders.values()].map((f) => f.title) };
 }
 
 /** Apple's own transcript of a call recording, when the note carries one (kept for comparison only). */
@@ -450,6 +461,8 @@ function appleTranscript(indexable, noteText) {
 }
 
 const PHONE = /^\+?[\d\s().-]{7,20}$/;
+/** The raw copy iOS keeps of every recorded call, next to the exported "Call with ….m4a". */
+export const MOMENTS_FILE = /^moments_.*-audio\.mov$/i;
 /** iOS's call-recording note titles: "Call with Kevin McGuire", "Call Recording", "Call". */
 export const CALL_TITLE = /^\s*call(\s+(with|recording)\b|\s*$)/i;
 
@@ -571,7 +584,7 @@ export function discover(paths = defaultPaths()) {
         const perFolder = countBy([...r.notes.map((n) => n.folder ?? "(no folder)"), ...callNotes.map((f) => f ?? "(no folder)")]);
         say(`    folders (notes per folder; use these names in ~/.strout-vault/apple-media.json):`);
         for (const [f, n] of Object.entries(perFolder).sort((a, b) => b[1] - a[1])) say(`      ${f}: ${n}`);
-        say(`    extractor: OK (${r.notes.length} text note(s): ${fmtCounts(countBy(r.notes.map((n) => n.skip ?? "ok")))}; ${r.recordings.length} call recording(s) (folder "${DEFAULT_CONFIG.call_recordings_folder}" or a title starting "Call"): ${fmtCounts(countBy(r.recordings.map((n) => n.skip ?? "ok")))}; ${r.otherAudio} other audio attachment(s), not sent)`);
+        say(`    extractor: OK (${r.notes.length} text note(s): ${fmtCounts(countBy(r.notes.map((n) => n.skip ?? "ok")))}; ${r.recordings.length} call recording(s) (folder "${DEFAULT_CONFIG.call_recordings_folder}" or a title starting "Call"): ${fmtCounts(countBy(r.recordings.map((n) => n.skip ?? "ok")))}, ${r.duplicateCopies} duplicate copies skipped; ${r.otherAudio} other audio attachment(s), not sent)`);
       } catch (err) {
         say(`    extractor: ${err instanceof SchemaError ? "SCHEMA MISMATCH: " : "ERROR: "}${err.message}`);
       }
