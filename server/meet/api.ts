@@ -3,6 +3,7 @@
 // events.list under calendar.events.readonly when that was granted too. A Meet account's refresh
 // token is its own grant, separate from the Gmail one, so Gmail's stays gmail.readonly only.
 import { Readable } from "node:stream";
+import { isRateLimited, RATE_LIMIT_RETRIES, rateLimitWaitMs } from "../messages/gmail/api.ts";
 
 export const DRIVE_MEET_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.meet.readonly";
 export const CALENDAR_EVENTS_READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.events.readonly";
@@ -94,7 +95,12 @@ export class MeetClient {
       this.calls++;
       const res = await this.o.fetchImpl(url, { headers: { authorization: `Bearer ${await this.token()}` } });
       if (res.ok) return res;
-      if ((res.status === 429 || res.status >= 500) && attempt < 4) {
+      const text = await res.text().catch(() => "");
+      if (isRateLimited(res.status, text) && attempt < RATE_LIMIT_RETRIES) {
+        await this.o.sleep(rateLimitWaitMs(res.headers.get("retry-after"), attempt));
+        continue;
+      }
+      if (res.status >= 500 && attempt < 4) {
         await this.o.sleep(1000 * 2 ** attempt);
         continue;
       }
@@ -102,7 +108,6 @@ export class MeetClient {
         this.accessToken = null;
         continue;
       }
-      const text = await res.text().catch(() => "");
       throw new GoogleApiError(res.status, `${url.hostname}${url.pathname.replace(/\/files\/[^/]+/, "/files/…")} ${res.status}: ${text.slice(0, 200)}`);
     }
   }
