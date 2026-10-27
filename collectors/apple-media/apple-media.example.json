@@ -5,6 +5,7 @@
   "skip_folders": ["Private"],
   "allow_folders": null,
   "call_recordings_folder": "Call Recordings",
+  "call_title_detection": true,
   "min_note_chars": 40,
   "min_memo_seconds": 5
 }

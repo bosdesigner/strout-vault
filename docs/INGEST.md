@@ -16,7 +16,7 @@ total and last error, read from what each one actually wrote. A collector silent
 | Zoom | cloud recordings + Zoom's transcript | `meeting` / `zoom` | hourly worker | live |
 | Gmail (3 accounts) | email threads, plain text, filtered | `email_thread` / `gmail` | 10-minute Repl + hourly worker | connected, never synced → steps B, C |
 | iMessage / SMS | texts, one thread per conversation per day | `text_thread` / `imessage` | Mac collector, every 15 min | merged, not installed → step D |
-| iPhone call recordings | the Notes "Call Recordings" folder: audio + Apple's transcript (kept for comparison) | `call` / `iphone_call` | Mac media collector, every 10 min; Shortcut | **new** → steps A, E, F |
+| iPhone call recordings | Notes with audio titled "Call with …" / "Call Recording" (any folder): audio + Apple's transcript (kept for comparison) | `call` / `iphone_call` | Mac media collector, every 10 min; Shortcut | **new** → steps A, E, F |
 | Voice Memos | recordings (≥ 5 s) | `recording` / `voice_memo` | Mac media collector; Shortcut | **new** → steps A, E, F |
 | Apple Notes | text notes (≥ 40 characters, not `Private`, not locked) | `note` / `apple_note` | Mac media collector | **new** → steps A, E |
 | Google Meet | recordings + the transcript Doc, participants from transcript and calendar | `meeting` / `meet` | hourly worker (`meet` step) | **new** → steps A, G |

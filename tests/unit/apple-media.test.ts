@@ -11,6 +11,7 @@ import { spawnSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   AccessError,
+  CALL_TITLE,
   canRead,
   closeCopy,
   coreDataDate,
@@ -54,7 +55,13 @@ describe("pure helpers", () => {
     expect(participantFromTitle("Call with Kevin McGuire")).toEqual({ name: "Kevin McGuire", phone: null });
     expect(participantFromTitle("+1 (214) 555-0166")).toEqual({ name: null, phone: "+1 (214) 555-0166" });
     expect(participantFromTitle("Call Recording – Daniel Ortiz")).toEqual({ name: "Daniel Ortiz", phone: null });
+    expect(participantFromTitle("Call Recording")).toBeNull();
     expect(participantFromTitle("")).toBeNull();
+    expect(CALL_TITLE.test("Call with Kevin McGuire")).toBe(true);
+    expect(CALL_TITLE.test("Call Recording")).toBe(true);
+    expect(CALL_TITLE.test("Call")).toBe(true);
+    expect(CALL_TITLE.test("Call me back about cedar")).toBe(false);
+    expect(CALL_TITLE.test("Callaway estimate")).toBe(false);
   });
 
   it("missing Full Disk Access is a clear error with the fix", () => {
@@ -118,7 +125,7 @@ describe.skipIf(!SQLITE_AVAILABLE)("fixture databases", () => {
     } finally {
       closeCopy(copy);
     }
-    expect(r.recordings).toHaveLength(2);
+    expect(r.recordings).toHaveLength(3);
     const kevin = r.recordings.find((c) => c.noteId === "NOTE-0015-CALL")!;
     expect(kevin).toMatchObject({ ref: "notes:NOTE-0015-CALL:ATT-0200-CALL", participant: { name: "Kevin McGuire", phone: null }, durationSec: 8, skip: null });
     expect(kevin.appleTranscript).toMatch(/drone pass/);
@@ -127,6 +134,9 @@ describe.skipIf(!SQLITE_AVAILABLE)("fixture databases", () => {
     const daniel = r.recordings.find((c) => c.noteId === "NOTE-0016-CALL")!;
     expect(daniel.participant).toEqual({ name: null, phone: "+1 (214) 555-0166" });
     expect(daniel.appleTranscript).toBeNull();
+    // No Call Recordings folder: a "Call Recording" note with audio in the main Notes folder is a call too, with nobody named.
+    const untitled = r.recordings.find((c) => c.noteId === "NOTE-0018-CALL")!;
+    expect(untitled).toMatchObject({ folder: "Notes", participant: null, skip: null, ref: "notes:NOTE-0018-CALL:ATT-0203-CALL" });
     expect(Object.fromEntries(r.notes.map((n) => [n.id, n.skip]))).toEqual({
       "NOTE-0010-LONG": null,
       "NOTE-0011-PRIV": "folder_skipped",
@@ -148,7 +158,7 @@ describe.skipIf(!SQLITE_AVAILABLE)("fixture databases", () => {
     try {
       const r = readNotes(copy.db, fx.notesDir, { ...DEFAULT_CONFIG, allow_folders: ["Another Story"] });
       expect(r.notes.filter((n) => !n.skip).map((n) => n.id)).toEqual(["NOTE-0017-AUDI"]);
-      expect(r.recordings).toHaveLength(2);
+      expect(r.recordings).toHaveLength(3);
     } finally {
       closeCopy(copy);
     }
@@ -159,7 +169,7 @@ describe.skipIf(!SQLITE_AVAILABLE)("fixture databases", () => {
     const copy = openCopy(path.join(old.notesDir, "NoteStore.sqlite"));
     try {
       const r = readNotes(copy.db, old.notesDir, DEFAULT_CONFIG);
-      expect(r.recordings).toHaveLength(2);
+      expect(r.recordings).toHaveLength(3);
       expect(r.notes.find((n) => n.id === "NOTE-0010-LONG")?.title).toBe("Woodlands porch");
     } finally {
       closeCopy(copy);
@@ -185,9 +195,10 @@ describe.skipIf(!SQLITE_AVAILABLE)("fixture databases", () => {
     expect(out).toContain("ZCLOUDRECORDING (4 row(s)): Z_PK, Z_ENT");
     expect(out).toContain("ZICNOTEDATA");
     expect(out).toContain("Call Recordings: 2");
+    expect(out).toContain("Notes: 4");
     expect(out).toContain("extractor: OK (4 recording(s)");
-    expect(out).toMatch(/2 call recording\(s\) in "Call Recordings": ok 2/);
-    expect(out).toContain("com.apple.m4a-audio 3");
+    expect(out).toMatch(/3 call recording\(s\) \(folder "Call Recordings" or a title starting "Call"\): ok 3/);
+    expect(out).toContain("com.apple.m4a-audio 4");
     expect(out).toContain(`${path.join(tmp, "nope")}: not found`);
     for (const secret of [LONG_NOTE.slice(0, 30), PRIVATE_NOTE.slice(0, 30), "drone pass", "Porch idea"]) expect(out).not.toContain(secret);
     expect(sums(fx.files)).toEqual(before);
@@ -205,9 +216,9 @@ describe.skipIf(!SQLITE_AVAILABLE)("fixture databases", () => {
     const memoBytes = fs.statSync(path.join(fx.voiceMemosDir, "20261020 091500-A1B2C3D4.m4a")).size;
     expect(out).toContain("DRY RUN: nothing was uploaded");
     expect(out).toMatch(new RegExp(`voice_memo\\s+1\\s+${memoBytes}\\s+0\\s+not_downloaded 1, deleted 1, short 1`));
-    expect(out).toMatch(/iphone_call\s+2\s+\d+\s+0\s+none/);
+    expect(out).toMatch(/iphone_call\s+3\s+\d+\s+0\s+none/);
     expect(out).toMatch(/apple_note\s+2\s+\d+\s+0\s+folder_skipped 1, short 1, locked 1, deleted 1/);
-    expect(out).toContain("1 audio attachment(s) in Notes folders other than \"Call Recordings\" are never sent");
+    expect(out).toContain("1 other audio attachment(s) in Notes, not call recordings, are never sent");
     for (const secret of [LONG_NOTE.slice(0, 30), PRIVATE_NOTE.slice(0, 30), "drone pass", "Porch idea", "Kevin"]) expect(out).not.toContain(secret);
     expect(fs.existsSync(state)).toBe(false);
     expect(sums(fx.files)).toEqual(before);

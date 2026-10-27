@@ -8,7 +8,7 @@ off: [`collectors/ios/SHORTCUT.md`](../ios/SHORTCUT.md)) is how they reach the v
 | What | Where on the Mac | Becomes |
 |---|---|---|
 | Voice Memos | `~/Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings/` (`CloudRecordings.db` + `.m4a`) | `kind=recording`, `source=voice_memo`, transcribed by the worker |
-| iPhone call recordings | the Notes folder **Call Recordings** (`NoteStore.sqlite` + `Accounts/*/Media/…`) | `kind=call`, `source=iphone_call`, transcribed by the worker; Apple's own transcript kept in `source_payload.apple_transcript` for comparison only |
+| iPhone call recordings | notes with audio titled **Call with …** / **Call Recording** in any folder, or anything in a **Call Recordings** folder (`NoteStore.sqlite` + `Accounts/*/Media/…`) | `kind=call`, `source=iphone_call`, transcribed by the worker; Apple's own transcript kept in `source_payload.apple_transcript` for comparison only |
 | Apple Notes text | every other Notes folder, subject to the filters below | `kind=note`, `source=apple_note`, searchable and embedded, no media |
 
 What it does on each run:
@@ -73,7 +73,7 @@ note counts, and `extractor: OK` (or `SCHEMA MISMATCH: …`) for each source. Pa
 ### 5. Filters (optional)
 
 Defaults: skip the Notes folder `Private`, skip notes under 40 characters, skip voice memos under 5 seconds, call
-recordings come from the folder `Call Recordings`. To change them:
+recordings are notes with audio titled "Call with …" or "Call Recording" (or in a `Call Recordings` folder). To change them:
 
 ```sh
 cp apple-media.example.json ~/.strout-vault/apple-media.json && open -e ~/.strout-vault/apple-media.json
@@ -85,7 +85,8 @@ cp apple-media.example.json ~/.strout-vault/apple-media.json && open -e ~/.strou
 | `allow_folders` | `null` | when a list, only these Notes folders are sent (call recordings unaffected) |
 | `min_note_chars` | `40` | shorter notes are not sent |
 | `min_memo_seconds` | `5` | shorter voice memos are not sent |
-| `call_recordings_folder` | `"Call Recordings"` | the folder iOS saves call recordings in |
+| `call_recordings_folder` | `"Call Recordings"` | audio in this folder is a call recording |
+| `call_title_detection` | `true` | audio in any folder whose note title starts with "Call" ("Call with Kevin", "Call Recording") is a call recording; the name after "Call with" becomes the participant |
 | `include_voice_memos` / `include_call_recordings` / `include_notes` | `true` | switch a source off |
 
 Locked (password-protected) notes and anything in Recently Deleted are never sent. Audio attached to notes in other
