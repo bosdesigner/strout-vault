@@ -1,6 +1,6 @@
 // Types shared by the API and the client.
 
-export type Source = "zoom" | "meet" | "upload" | "iphone_call" | "contractor_call";
+export type Source = "zoom" | "meet" | "upload" | "iphone_call" | "contractor_call" | "voice_memo" | "apple_note" | "imessage" | "gmail";
 export type PipelineStatus = "queued" | "proxying" | "transcribing" | "indexing" | "ready" | "failed";
 export type StorageKind = "b2" | "r2" | "local" | "zoom" | "s3_deep_archive";
 
@@ -279,8 +279,13 @@ export interface UploadFinishInput {
   title: string;
   recordedAt: string;
   workspaceId: string | null;
-  source: "upload" | "iphone_call" | "contractor_call";
+  source: "upload" | "iphone_call" | "contractor_call" | "voice_memo";
   partyIds: number[];
+  /** Device ingest (Mac collector, iPhone Shortcut): upserted by (source, sourceRef). */
+  sourceRef?: string | null;
+  durationSec?: number | null;
+  participantsRaw?: unknown[] | null;
+  sourcePayload?: Record<string, unknown> | null;
 }
 
 export const ACCEPTED_UPLOAD_EXTENSIONS = ["mp4", "mov", "m4a", "mp3", "wav", "webm", "mkv"] as const;

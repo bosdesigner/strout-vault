@@ -59,6 +59,11 @@ export interface StorageDriver {
   signPart(input: { key: string; uploadId: string; partNumber: number }): Promise<PresignedUrl>;
   completeMultipartUpload(input: { key: string; uploadId: string; parts: MultipartPart[] }): Promise<{ location: string }>;
   abortMultipartUpload(input: { key: string; uploadId: string }): Promise<void>;
+  /**
+   * The parts uploaded so far, with their ETags. The device ingest completes an upload from this
+   * list itself, so a client that cannot read response headers (an iPhone Shortcut) never needs to.
+   */
+  listParts(input: { key: string; uploadId: string }): Promise<MultipartPart[]>;
 
   /** Server-side write of a whole object (call recordings fetched from Twilio). Returns bytes written. */
   putObject(input: { key: string; body: Buffer; contentType?: string | null }): Promise<{ bytes: number }>;

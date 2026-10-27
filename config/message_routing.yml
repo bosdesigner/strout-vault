@@ -19,3 +19,12 @@
 # domains:
 #   oakridgebuilders.example.com: strout_arch
 #   gulfcoastmillwork.example.com: southern_shutter
+
+# Apple Notes sent by the Mac media collector (docs/INGEST.md): folder name -> workspace.
+# Call recordings and voice memos route by who is on them (the parties rules above); a note has
+# nobody on it, so its folder is the only signal. Unmatched notes go to `inbox`. phalanx is never
+# assigned from here either: a note in a phalanx folder goes to `inbox` with phalanx suggested.
+# apple_notes_folders:
+#   Another Story: another_story
+#   Strout Architecture: strout_arch
+#   Family: personal

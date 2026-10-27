@@ -4,6 +4,7 @@ import {
   UploadPartCommand,
   CompleteMultipartUploadCommand,
   AbortMultipartUploadCommand,
+  ListPartsCommand,
   GetObjectCommand,
   HeadObjectCommand,
   HeadBucketCommand,
@@ -151,6 +152,20 @@ export class S3StorageDriver implements StorageDriver {
       }),
     );
     return { location: out.Location ?? `r2://${bucket}/${input.key}` };
+  }
+
+  async listParts(input: { key: string; uploadId: string }): Promise<MultipartPart[]> {
+    assertSafeKey(input.key);
+    const { client, bucket } = this.backends.r2!;
+    const out: MultipartPart[] = [];
+    let marker: string | undefined;
+    for (;;) {
+      const page = await client.send(new ListPartsCommand({ Bucket: bucket, Key: input.key, UploadId: input.uploadId, PartNumberMarker: marker }));
+      for (const p of page.Parts ?? []) if (p.PartNumber && p.ETag) out.push({ PartNumber: p.PartNumber, ETag: p.ETag });
+      if (!page.IsTruncated || !page.NextPartNumberMarker) break;
+      marker = page.NextPartNumberMarker;
+    }
+    return out.sort((a, b) => a.PartNumber - b.PartNumber);
   }
 
   async abortMultipartUpload(input: { key: string; uploadId: string }) {

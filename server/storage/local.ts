@@ -134,6 +134,21 @@ export class LocalStorageDriver implements StorageDriver {
     return { location: `local://${input.key}` };
   }
 
+  async listParts(input: { key: string; uploadId: string }): Promise<MultipartPart[]> {
+    const dir = this.uploadDir(input.uploadId);
+    const meta = JSON.parse(await fsp.readFile(path.join(dir, "meta.json"), "utf8")) as { key: string };
+    if (meta.key !== input.key) throw new Error("key does not match upload");
+    const out: MultipartPart[] = [];
+    for (const name of (await fsp.readdir(dir)).sort()) {
+      const m = /^part-(\d{5})$/.exec(name);
+      if (!m) continue;
+      const hash = crypto.createHash("md5");
+      for await (const chunk of fs.createReadStream(path.join(dir, name))) hash.update(chunk as Buffer);
+      out.push({ PartNumber: Number(m[1]), ETag: `"${hash.digest("hex")}"` });
+    }
+    return out;
+  }
+
   async abortMultipartUpload(input: { key: string; uploadId: string }) {
     const dir = this.uploadDir(input.uploadId);
     await fsp.rm(dir, { recursive: true, force: true });

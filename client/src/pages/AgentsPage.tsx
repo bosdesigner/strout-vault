@@ -36,8 +36,9 @@ interface ApiToken {
   name: string;
   tokenPrefix: string;
   workspaceScope: string[];
-  /** vault:read + vault:propose (MCP), or ingest:messages alone (the iMessage collector). */
+  /** vault:read + vault:propose (MCP), or one ingest scope alone (ingest:messages, ingest:device). */
   scopes?: string[];
+  purpose?: "mcp" | "imessage" | "mac_media" | "ios_shortcut" | null;
   createdBy: string | null;
   createdAt: string;
   lastUsedAt: string | null;
@@ -213,7 +214,7 @@ function TokensTab({ status }: { status: Status | undefined }) {
   const [all, setAll] = useState(true);
   const [picked, setPicked] = useState<string[]>([]);
   const [expires, setExpires] = useState<string>("never");
-  const [kind, setKind] = useState<"mcp" | "ingest">("mcp");
+  const [kind, setKind] = useState<TokenKind>("mcp");
   const [minted, setMinted] = useState<{ token: string; item: ApiToken } | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -226,7 +227,13 @@ function TokensTab({ status }: { status: Status | undefined }) {
     mutationFn: () =>
       api<{ token: string; item: ApiToken }>("/mcp/tokens", {
         method: "POST",
-        json: { name: name.trim(), workspaceScope: kind === "ingest" ? [] : scope, scopes: kind === "ingest" ? ["ingest:messages"] : undefined, expiresInDays: expires === "never" ? null : Number(expires) },
+        json: {
+          name: name.trim(),
+          workspaceScope: kind === "mcp" ? scope : [],
+          scopes: TOKEN_KINDS[kind].scopes,
+          purpose: TOKEN_KINDS[kind].purpose,
+          expiresInDays: expires === "never" ? null : Number(expires),
+        },
       }),
     onSuccess: (out) => {
       setMinted(out);
@@ -265,7 +272,13 @@ function TokensTab({ status }: { status: Status | undefined }) {
                     <code className="rounded bg-muted px-1.5 text-xs">{t.tokenPrefix}…</code>
                     {t.revokedAt ? <Badge variant="muted">revoked {formatRelative(t.revokedAt)}</Badge> : t.expiresAt && new Date(t.expiresAt) < new Date() ? <Badge variant="muted">expired</Badge> : <Badge variant="success">active</Badge>}
                   </div>
-                  {t.scopes?.includes("ingest:messages") ? <Badge variant="secondary">message ingest only: no reads, no MCP</Badge> : <ScopeBadges scope={t.workspaceScope} restricted={restricted} />}
+                  {t.scopes?.includes("ingest:messages") ? (
+                    <Badge variant="secondary">message ingest only: no reads, no MCP</Badge>
+                  ) : t.scopes?.includes("ingest:device") ? (
+                    <Badge variant="secondary">{t.purpose === "ios_shortcut" ? "iPhone Shortcut" : "Mac media collector"}: device ingest only, no reads, no MCP</Badge>
+                  ) : (
+                    <ScopeBadges scope={t.workspaceScope} restricted={restricted} />
+                  )}
                   <p className="text-xs text-muted-foreground">
                     created {formatDate(t.createdAt)}{t.createdBy ? ` by ${t.createdBy}` : ""} · {t.lastUsedAt ? `last used ${formatRelative(t.lastUsedAt)}` : "never used"} · {t.calls} call{t.calls === 1 ? "" : "s"}
                     {t.expiresAt ? ` · expires ${formatDate(t.expiresAt)}` : ""}
@@ -311,6 +324,12 @@ function TokensTab({ status }: { status: Status | undefined }) {
               <p className="text-xs text-muted-foreground">
                 On the Mac: <code className="rounded bg-muted px-1">pbpaste &gt; ~/.strout-vault/imessage-token &amp;&amp; chmod 600 ~/.strout-vault/imessage-token</code> (collectors/imessage/README.md).
               </p>
+            ) : minted.item.purpose === "mac_media" ? (
+              <p className="text-xs text-muted-foreground">
+                On the Mac, into the Keychain: <code className="rounded bg-muted px-1">security add-generic-password -U -s strout-vault -a apple-media -w "$(pbpaste)"</code> (collectors/apple-media/README.md).
+              </p>
+            ) : minted.item.purpose === "ios_shortcut" ? (
+              <p className="text-xs text-muted-foreground">Paste it into the Shortcut's Token text action (collectors/ios/SHORTCUT.md).</p>
             ) : (
               <p className="text-xs text-muted-foreground">
                 Claude Code: <code className="rounded bg-muted px-1">claude mcp add --transport http strout-vault {status?.endpoint ?? "<PUBLIC_URL>/mcp"} --header "Authorization: Bearer &lt;token&gt;"</code>
@@ -335,13 +354,15 @@ function TokensTab({ status }: { status: Status | undefined }) {
             </div>
             <div>
               <Label htmlFor="token-kind">Kind</Label>
-              <Select value={kind} onValueChange={(v) => setKind(v as "mcp" | "ingest")}>
+              <Select value={kind} onValueChange={(v) => setKind(v as TokenKind)}>
                 <SelectTrigger id="token-kind" data-testid="token-kind">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="mcp">MCP: read and propose</SelectItem>
                   <SelectItem value="ingest">iMessage collector: send texts only</SelectItem>
+                  <SelectItem value="mac_media">Mac media collector: voice memos, call recordings, notes</SelectItem>
+                  <SelectItem value="ios_shortcut">iPhone Shortcut: send audio only</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -398,7 +419,7 @@ function TokensTab({ status }: { status: Status | undefined }) {
             {kind === "mcp" ? (
               <p className="text-xs text-muted-foreground">Scope: <ScopeBadges scope={scope} restricted={restricted} /></p>
             ) : (
-              <p className="text-xs text-muted-foreground">Can only POST /api/ingest/messages. It reads nothing and cannot call any MCP tool.</p>
+              <p className="text-xs text-muted-foreground">Can only call {kind === "ingest" ? "POST /api/ingest/messages" : "/api/ingest/device/*"}. It reads nothing and cannot call any MCP tool.</p>
             )}
             {create.isError && <p className="text-sm text-destructive">{(create.error as Error).message}</p>}
             <Button type="submit" disabled={!name.trim() || create.isPending || (kind === "mcp" && !scope.length)} data-testid="create-token">
@@ -410,6 +431,14 @@ function TokensTab({ status }: { status: Status | undefined }) {
     </div>
   );
 }
+
+type TokenKind = "mcp" | "ingest" | "mac_media" | "ios_shortcut";
+const TOKEN_KINDS: Record<TokenKind, { scopes: string[] | undefined; purpose: string | undefined }> = {
+  mcp: { scopes: undefined, purpose: undefined },
+  ingest: { scopes: ["ingest:messages"], purpose: "imessage" },
+  mac_media: { scopes: ["ingest:device"], purpose: "mac_media" },
+  ios_shortcut: { scopes: ["ingest:device"], purpose: "ios_shortcut" },
+};
 
 // ------------------------------------------------------------------ apps --
 function AppsTab() {

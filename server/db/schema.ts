@@ -96,7 +96,7 @@ export const interactions = pgTable("interactions", {
   id: id(),
   workspaceId: text("workspace_id").references(() => workspaces.id),
   mediaId: ref("media_id"),
-  kind: text("kind").notNull(), // call | meeting | email | text | in_person | other | text_thread | email_thread
+  kind: text("kind").notNull(), // call | meeting | email | text | in_person | other | text_thread | email_thread | recording | note
   occurredAt: timestamp("occurred_at", { withTimezone: true }),
   title: text("title"),
   summary: text("summary"),
@@ -105,7 +105,7 @@ export const interactions = pgTable("interactions", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   // 0002_recordings
   vaultId: text("vault_id").unique(),
-  source: text("source"), // zoom | meet | upload | iphone_call | contractor_call | imessage | gmail
+  source: text("source"), // zoom | meet | upload | iphone_call | contractor_call | imessage | gmail | voice_memo | apple_note
   sourceRef: text("source_ref"),
   legacyMeetingId: bigint("legacy_meeting_id", { mode: "number" }),
   originalFilename: text("original_filename"),
@@ -138,7 +138,7 @@ export const media = pgTable("media", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   // 0002_recordings
   interactionId: ref("interaction_id").references(() => interactions.id),
-  kind: text("kind"), // video | audio | transcript_vtt | chat | cc | other
+  kind: text("kind"), // video | audio | transcript_vtt | transcript_meet | chat | cc | other
   role: text("role"), // original | master | proxy | clip
   bucket: text("bucket"),
   storageClass: text("storage_class"),

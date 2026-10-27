@@ -193,12 +193,12 @@ interface StoredMessage {
   attachments: MessageAttachment[];
 }
 
-interface PartyRef {
+export interface PartyRef {
   id: number;
   name: string;
 }
 
-async function matchParties(db: pg.Pool | pg.PoolClient, ids: Identifier[]): Promise<Map<string, PartyRef>> {
+export async function matchParties(db: pg.Pool | pg.PoolClient, ids: Identifier[]): Promise<Map<string, PartyRef>> {
   const out = new Map<string, PartyRef>();
   const emails = [...new Set(ids.filter((i) => i.kind === "email").map((i) => i.value))];
   const phones = [...new Set(ids.filter((i) => i.kind === "phone").map((i) => i.value))];
