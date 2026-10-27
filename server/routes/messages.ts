@@ -1,5 +1,6 @@
-// Owner-only: connecting Gmail accounts (OAuth, scope gmail.readonly and nothing else) and
-// seeing their sync state. The refresh token is encrypted before it is stored and never sent
+// Owner-only: connecting Gmail accounts (OAuth, scope gmail.readonly and nothing else) and Google
+// Meet accounts (a separate grant: drive.meet.readonly, plus calendar.events.readonly when asked
+// with ?calendar=1, and nothing else), and seeing their sync state. The refresh token is encrypted before it is stored and never sent
 // back to the browser. Nothing here sends, labels or changes mail.
 import crypto from "node:crypto";
 import { Router } from "express";
@@ -7,23 +8,34 @@ import type { AppContext } from "../context.ts";
 import { encryptSecret } from "../messages/crypto.ts";
 import { exchangeCode, GMAIL_READONLY_SCOPE, GmailClient } from "../messages/gmail/api.ts";
 import { gmailConfigured } from "../messages/gmail/sync.ts";
+import { CALENDAR_EVENTS_READONLY_SCOPE, checkMeetScopes, DRIVE_MEET_READONLY_SCOPE } from "../meet/api.ts";
+
+/** The email inside a Google id_token (the code exchange's own response, straight from Google over TLS). */
+function idTokenEmail(idToken: string | undefined): string | null {
+  try {
+    const payload = JSON.parse(Buffer.from(String(idToken).split(".")[1] ?? "", "base64url").toString("utf8")) as { email?: string; email_verified?: boolean };
+    return payload.email && payload.email_verified !== false ? payload.email.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
 import { HttpError, intId, wrap } from "./util.ts";
 
 const STATE_TTL_MS = 10 * 60_000;
 
-function sign(secret: string, payload: string): string {
-  return crypto.createHmac("sha256", secret).update(`gmail-connect:${payload}`).digest("base64url");
+function sign(secret: string, payload: string, purpose: string): string {
+  return crypto.createHmac("sha256", secret).update(`${purpose}-connect:${payload}`).digest("base64url");
 }
 
-export function makeState(secret: string, email: string, now = Date.now()): string {
+export function makeState(secret: string, email: string, now = Date.now(), purpose: "gmail" | "meet" = "gmail"): string {
   const payload = Buffer.from(JSON.stringify({ e: email, x: now + STATE_TTL_MS, n: crypto.randomBytes(8).toString("hex") })).toString("base64url");
-  return `${payload}.${sign(secret, payload)}`;
+  return `${payload}.${sign(secret, payload, purpose)}`;
 }
 
-export function checkState(secret: string, state: string, email: string, now = Date.now()): boolean {
+export function checkState(secret: string, state: string, email: string, now = Date.now(), purpose: "gmail" | "meet" = "gmail"): boolean {
   const [payload, mac] = state.split(".");
   if (!payload || !mac) return false;
-  const expected = sign(secret, payload);
+  const expected = sign(secret, payload, purpose);
   if (mac.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) return false;
   try {
     const v = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { e: string; x: number };
@@ -98,6 +110,60 @@ export function messagesRouter(ctx: AppContext): Router {
         [email, encryptSecret(tokens.refresh_token, c.MESSAGES_ENCRYPTION_KEY), granted.join(" ") || GMAIL_READONLY_SCOPE, req.session!.email],
       );
       res.type("text").send(`Connected ${email} (read-only). The worker starts syncing new mail on its next run; run a backfill with: npm run messages:gmail -- --account ${email} --since 30 --dry-run`);
+    }),
+  );
+
+  // ---- Google Meet: its own grant, so Gmail's refresh token stays gmail.readonly only. ----
+  const meetRedirectUri = () => `${c.PUBLIC_URL.replace(/\/$/, "")}/api/messages/meet/callback`;
+  r.get(
+    "/meet/connect",
+    wrap(async (req, res) => {
+      if (!gmailConfigured(c)) throw new HttpError(503, "Google is not configured: set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and MESSAGES_ENCRYPTION_KEY");
+      if (!c.PUBLIC_URL) throw new HttpError(503, "PUBLIC_URL is not set");
+      const scopes = [DRIVE_MEET_READONLY_SCOPE, ...(req.query.calendar === "1" ? [CALENDAR_EVENTS_READONLY_SCOPE] : []), ...(req.query.identify === "1" ? ["openid", "email"] : [])];
+      const url = new URL(c.GOOGLE_OAUTH_AUTHORIZE_URL);
+      url.searchParams.set("client_id", c.GOOGLE_CLIENT_ID!);
+      url.searchParams.set("redirect_uri", meetRedirectUri());
+      url.searchParams.set("response_type", "code");
+      url.searchParams.set("scope", scopes.join(" "));
+      url.searchParams.set("access_type", "offline");
+      url.searchParams.set("prompt", "consent select_account");
+      url.searchParams.set("include_granted_scopes", "false");
+      if (typeof req.query.account === "string" && req.query.account.includes("@")) url.searchParams.set("login_hint", req.query.account.slice(0, 200));
+      url.searchParams.set("state", makeState(c.SESSION_SECRET, req.session!.email, Date.now(), "meet"));
+      res.redirect(url.toString());
+    }),
+  );
+
+  r.get(
+    "/meet/callback",
+    wrap(async (req, res) => {
+      if (!gmailConfigured(c)) throw new HttpError(503, "Google is not configured");
+      const state = String(req.query.state ?? "");
+      if (!checkState(c.SESSION_SECRET, state, req.session!.email, Date.now(), "meet")) throw new HttpError(400, "invalid or expired state; start again from /api/messages/meet/connect");
+      if (req.query.error) throw new HttpError(400, `Google returned ${String(req.query.error).slice(0, 60)}`);
+      const code = String(req.query.code ?? "");
+      if (!code) throw new HttpError(400, "missing code");
+      const tokens = (await exchangeCode({ tokenUrl: c.GOOGLE_OAUTH_TOKEN_URL, clientId: c.GOOGLE_CLIENT_ID!, clientSecret: c.GOOGLE_CLIENT_SECRET!, redirectUri: meetRedirectUri(), code, fetchImpl: ctx.fetchImpl })) as { access_token?: string; refresh_token?: string; scope?: string; id_token?: string };
+      const granted = (tokens.scope ?? "").split(" ").filter(Boolean);
+      const bad = checkMeetScopes(granted);
+      if (bad) throw new HttpError(400, `${bad}; refusing to store it`);
+      if (!tokens.refresh_token) throw new HttpError(400, "Google returned no refresh token; remove the app's access at myaccount.google.com/permissions and connect again");
+      // drive.meet.readonly carries no profile scope: Drive's about.get names the account, else the
+      // id_token when the connect asked for sign-in identity (?identify=1).
+      const about = await ctx.fetchImpl(`${c.DRIVE_API_BASE.replace(/\/$/, "")}/about?fields=user(emailAddress)`, { headers: { authorization: `Bearer ${tokens.access_token}` } });
+      const who = (await about.json().catch(() => ({}))) as { user?: { emailAddress?: string } };
+      const email = (about.ok ? who.user?.emailAddress?.toLowerCase() : null) ?? idTokenEmail(tokens.id_token);
+      if (!email) throw new HttpError(502, `could not read which Google account this is (Drive about answered ${about.status}); connect again with /api/messages/meet/connect?identify=1`);
+      await ctx.pool.query(
+        `insert into message_accounts (provider, account_email, refresh_token_enc, scope, status, created_by)
+         values ('meet', $1, $2, $3, 'active', $4)
+         on conflict (provider, account_email) do update set refresh_token_enc = excluded.refresh_token_enc, scope = excluded.scope, status = 'active', last_error = null, updated_at = now()`,
+        [email, encryptSecret(tokens.refresh_token, c.MESSAGES_ENCRYPTION_KEY), granted.join(" "), req.session!.email],
+      );
+      res
+        .type("text")
+        .send(`Connected ${email} for Google Meet (read-only: ${granted.includes(CALENDAR_EVENTS_READONLY_SCOPE) ? "Meet recordings and transcripts, calendar events" : "Meet recordings and transcripts"}). The worker picks up new recordings on its next run; backfill with: npm run messages:meet -- --account ${email} --since 90 --dry-run`);
     }),
   );
 

@@ -5,6 +5,9 @@
 //   2. Zoom's CC file (the live captions, same engine, no speaker names)
 //   3. Groq Whisper, only when GROQ_API_KEY is set and the month's budget allows
 //
+// Google Meet's transcript Doc (media kind transcript_meet, exported as text by the meet step)
+// counts as the platform's own transcript, exactly like Zoom's TRANSCRIPT file.
+//
 // Segments are written in one transaction per recording, so a crash never
 // leaves half a transcript behind and nothing ever needs deleting.
 
@@ -18,12 +21,14 @@ import { checkBudget, recordSpend } from "./budget.ts";
 import { estimateCostUsd, parseResponse, transcribeChunk, type SttSegment } from "./groq.ts";
 import { prepareOpus, probeDuration, splitAudio } from "./media.ts";
 import { cuesToPlainText, parseVtt } from "./vtt.ts";
+import { parseMeetTranscript } from "../meet/transcript.ts";
 
 export interface TranscribeSummary {
   candidates: number;
   done: number;
   viaZoomTranscript: number;
   viaZoomCaptions: number;
+  viaMeetTranscript?: number;
   viaGroq: number;
   waitingOnBudget: number;
   failed: number;
@@ -69,6 +74,7 @@ export async function processTranscriptions(ctx: WorkerContext): Promise<Transcr
     done: 0,
     viaZoomTranscript: 0,
     viaZoomCaptions: 0,
+    viaMeetTranscript: 0,
     viaGroq: 0,
     waitingOnBudget: 0,
     failed: 0,
@@ -81,7 +87,7 @@ export async function processTranscriptions(ctx: WorkerContext): Promise<Transcr
       where not exists (select 1 from transcripts t where t.interaction_id = i.id)
         and not exists (select 1 from segments s where s.interaction_id = i.id)
         and exists (select 1 from media m where m.interaction_id = i.id and m.role = 'original'
-                      and m.status in ('verified', 'verified_stable') and m.kind in ('video', 'audio', 'transcript_vtt', 'caption_vtt'))
+                      and m.status in ('verified', 'verified_stable') and m.kind in ('video', 'audio', 'transcript_vtt', 'caption_vtt', 'transcript_meet'))
         and (
           i.pipeline_status = 'queued'
           or (i.pipeline_status = 'transcribing' and coalesce(i.pipeline_updated_at, now() - interval '1 day') < now() - interval '2 hours')
@@ -112,6 +118,7 @@ export async function processTranscriptions(ctx: WorkerContext): Promise<Transcr
       summary.done++;
       if (written.source === "zoom_vtt") summary.viaZoomTranscript++;
       else if (written.source === "zoom_cc") summary.viaZoomCaptions++;
+      else if (written.source === "meet_doc") summary.viaMeetTranscript = (summary.viaMeetTranscript ?? 0) + 1;
       else if (written.source === "groq") summary.viaGroq++;
       summary.spentUsd += written.costUsd ?? 0;
       ctx.log(`transcribe:   ${label}: ${written.segments.length} segments via ${written.source}${written.costUsd ? ` ($${written.costUsd.toFixed(3)})` : ""}`);
@@ -138,10 +145,24 @@ async function transcribeOne(ctx: WorkerContext, c: Candidate, itemDir: string):
   const reachable = media.filter((m) => canRead(ctx, m));
   const vtt = reachable.find((m) => m.kind === "transcript_vtt");
   const cc = reachable.find((m) => m.kind === "caption_vtt");
+  const meetDoc = reachable.find((m) => m.kind === "transcript_meet");
   const audio = reachable.find((m) => m.kind === "audio") ?? reachable.find((m) => m.kind === "video");
   const prefer = ctx.config.TRANSCRIBE_PREFER;
 
   const tryZoom = async (): Promise<Written | null> => {
+    if (meetDoc) {
+      const parsed = parseMeetTranscript(await readText(ctx, meetDoc, 32 * 1024 * 1024), c.duration_sec);
+      if (parsed.segments.length) {
+        return {
+          source: "meet_doc",
+          model: null,
+          language: null,
+          hasWords: false,
+          durationSec: c.duration_sec ?? parsed.durationSec,
+          segments: parsed.segments.map((s) => ({ start: s.start, end: s.end, speaker: s.speaker, text: s.text, words: null })),
+        };
+      }
+    }
     for (const [m, source] of [
       [vtt, "zoom_vtt"],
       [cc, "zoom_cc"],

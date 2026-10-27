@@ -24,6 +24,7 @@
     "mcp:semantic-check": "tsx scripts/semantic-check.ts",
     "workspaces:propose": "tsx scripts/propose-workspaces.ts",
     "messages:gmail": "tsx scripts/gmail-backfill.ts",
+    "messages:meet": "tsx scripts/meet-backfill.ts",
     "hash-password": "tsx scripts/hash-password.ts",
     "test": "vitest run",
     "test:e2e": "playwright test",

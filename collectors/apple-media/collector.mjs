@@ -260,13 +260,10 @@ async function main() {
     plan[src] = [];
     already[src] = 0;
     for (const it of found[src]) {
-      if (!inWindow(it.when)) {
-        found.skipped[src].before_window = (found.skipped[src].before_window ?? 0) + 1;
-        continue;
-      }
       const sent = state[src][it.ref];
       const unchanged = src === "apple_note" ? sent && it.modifiedAt && sent === it.modifiedAt.toISOString() : !!sent;
       if (unchanged) already[src]++;
+      else if (!inWindow(it.when)) found.skipped[src].before_window = (found.skipped[src].before_window ?? 0) + 1;
       else plan[src].push(it);
     }
   }

@@ -11,14 +11,16 @@ import { processScouting, type ScoutSummary } from "./scout.ts";
 import { processExtraction, type ExtractSummary } from "./extract.ts";
 import { processLeads } from "./leads.ts";
 import { processGmail } from "./gmail.ts";
+import { processMeet } from "./meet.ts";
+import type { MeetSyncSummary } from "../meet/sync.ts";
 import type { GmailSyncSummary } from "../messages/gmail/sync.ts";
 import type { LeadSyncSummary } from "../leads/sync.ts";
 import { processCuts, type CutSummary } from "./cut.ts";
 import { buildReport, type PipelineReport } from "./report.ts";
 import { setState } from "./sync.ts";
 
-export type Step = "zoom" | "leads" | "gmail" | "transcribe" | "embed" | "extract" | "scout" | "cut" | "report";
-export const ALL_STEPS: Step[] = ["zoom", "leads", "gmail", "transcribe", "embed", "extract", "scout", "cut", "report"];
+export type Step = "zoom" | "meet" | "leads" | "gmail" | "transcribe" | "embed" | "extract" | "scout" | "cut" | "report";
+export const ALL_STEPS: Step[] = ["zoom", "meet", "leads", "gmail", "transcribe", "embed", "extract", "scout", "cut", "report"];
 /**
  * Steps a run may do without the main worker lock: the 10-minute messages deployment runs
  * "gmail,embed" while the hourly run may still be transcribing. Each of those steps takes its
@@ -34,6 +36,7 @@ export interface RunOptions {
 
 export interface RunSummary {
   zoom?: SyncSummary;
+  meet?: MeetSyncSummary;
   leads?: LeadSyncSummary;
   gmail?: GmailSyncSummary;
   transcribe?: TranscribeSummary;
@@ -72,6 +75,7 @@ export interface WorkerConfigSnapshot {
   leadsPlatform?: boolean;
   leadsAirtable?: boolean;
   gmailConfigured?: boolean;
+  meetConfigured?: boolean;
 }
 
 export function configSnapshot(ctx: WorkerContext): WorkerConfigSnapshot {
@@ -97,6 +101,7 @@ export function configSnapshot(ctx: WorkerContext): WorkerConfigSnapshot {
     leadsPlatform: !!c.LEADS_DATABASE_URL,
     leadsAirtable: !!c.AIRTABLE_TOKEN,
     gmailConfigured: !!(c.GOOGLE_CLIENT_ID && c.GOOGLE_CLIENT_SECRET && c.MESSAGES_ENCRYPTION_KEY),
+    meetConfigured: !!(c.GOOGLE_CLIENT_ID && c.GOOGLE_CLIENT_SECRET && c.MESSAGES_ENCRYPTION_KEY),
     embeddingProvider: c.EMBEDDING_PROVIDER,
     embeddingModel: c.EMBEDDING_PROVIDER === "off" ? null : c.EMBEDDING_MODEL ?? (c.EMBEDDING_PROVIDER === "voyage" ? "voyage-3.5" : c.EMBEDDING_PROVIDER === "openai" ? "text-embedding-3-small" : "fake-hash-1024"),
   };
@@ -145,6 +150,7 @@ export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Prom
     for (const step of steps) {
       try {
         if (step === "zoom") summary.zoom = await syncZoom(ctx, { dryRun: opts.dryRun });
+        else if (step === "meet") summary.meet = await processMeet(ctx, { dryRun: opts.dryRun });
         else if (step === "leads") summary.leads = await processLeads(ctx, { dryRun: opts.dryRun });
         else if (step === "gmail") summary.gmail = await processGmail(ctx, { dryRun: opts.dryRun });
         else if (step === "transcribe" && !opts.dryRun) summary.transcribe = await processTranscriptions(ctx);
@@ -188,6 +194,14 @@ export function formatRunSummary(s: RunSummary): string {
         : "zoom: not configured",
     );
   }
+  if (s.meet) {
+    const m = s.meet;
+    lines.push(
+      m.skipped
+        ? `meet: off (${m.skipped})`
+        : `meet: ${m.accounts.map((a) => `${a.account} ${a.error ? "FAILED" : a.capability === "none_found" ? "no recordings" : `${a.recordingsNew} new of ${a.recordingsSeen}`}`).join(", ")}; downloaded ${m.filesVerified} ok, ${m.filesFailed} failed (${(m.bytes / 1024 / 1024).toFixed(1)} MB)${m.dryRun ? ` (dry run, would download ${(m.bytesPending / 1024 / 1024).toFixed(1)} MB)` : ""}${m.stoppedEarly ? `; stopped early: ${m.stoppedEarly}` : ""}`,
+    );
+  }
   if (s.leads) {
     const l = s.leads;
     const srcs = Object.entries(l.sources).filter(([, v]) => v.configured);
@@ -209,7 +223,7 @@ export function formatRunSummary(s: RunSummary): string {
   if (s.transcribe) {
     const t = s.transcribe;
     lines.push(
-      `transcribe: ${t.done}/${t.candidates} done (zoom transcript ${t.viaZoomTranscript}, captions ${t.viaZoomCaptions}, groq ${t.viaGroq}), ${t.waitingOnBudget} waiting on budget, ${t.failed} failed, $${t.spentUsd.toFixed(3)} spent${t.stoppedEarly ? `; stopped early: ${t.stoppedEarly}` : ""}`,
+      `transcribe: ${t.done}/${t.candidates} done (zoom transcript ${t.viaZoomTranscript}, captions ${t.viaZoomCaptions}${t.viaMeetTranscript ? `, meet transcript ${t.viaMeetTranscript}` : ""}, groq ${t.viaGroq}), ${t.waitingOnBudget} waiting on budget, ${t.failed} failed, $${t.spentUsd.toFixed(3)} spent${t.stoppedEarly ? `; stopped early: ${t.stoppedEarly}` : ""}`,
     );
   }
   if (s.embed) {
@@ -247,7 +261,7 @@ export function formatRunSummary(s: RunSummary): string {
     );
   }
   // Per-item errors from each step, a few of them: the full lists live in the run's summary JSON.
-  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.leads?.errors ?? []), ...(s.gmail?.errors ?? []), ...(s.gmail?.ingest.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.embed?.errors ?? []), ...(s.extract?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
+  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.meet?.errors ?? []), ...(s.leads?.errors ?? []), ...(s.gmail?.errors ?? []), ...(s.gmail?.ingest.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.embed?.errors ?? []), ...(s.extract?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
   if (itemErrors.length) {
     const shown = itemErrors.slice(0, 3);
     lines.push(`errors: ${shown.join(" | ")}${itemErrors.length > shown.length ? ` | …and ${itemErrors.length - shown.length} more` : ""}`);

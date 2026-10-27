@@ -339,7 +339,7 @@ async function identifyParticipants(pool: pg.Pool, list: NonNullable<FinalizeInp
 }
 
 /** A contact name from the phone matches a person only when exactly one person has that name. Never creates one. */
-async function matchNames(pool: pg.Pool, names: string[]): Promise<Map<string, PartyRef>> {
+export async function matchNames(pool: pg.Pool, names: string[]): Promise<Map<string, PartyRef>> {
   const out = new Map<string, PartyRef>();
   const wanted = [...new Set(names.map((n) => n.toLowerCase()).filter((n) => n.length >= 3))];
   if (!wanted.length) return out;
