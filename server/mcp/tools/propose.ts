@@ -5,9 +5,26 @@
 import { z } from "zod";
 import { inScope } from "../scope.ts";
 import { deepLink, ToolError, type ToolContext, type ToolDef } from "./types.ts";
+import { normalizeIdentifier } from "../../messages/identity.ts";
 
 const id = z.coerce.number().int().positive();
 const strList = z.array(z.string().trim().min(1).max(200)).max(20);
+/** Social handles, stored normalised: "tiktok:<username>" / "instagram:<username>". */
+const handleList = z
+  .array(
+    z
+      .string()
+      .trim()
+      .transform((v, c) => {
+        const id = normalizeIdentifier(v);
+        if (id?.kind !== "handle") {
+          c.addIssue({ code: "custom", message: `"${v.slice(0, 80)}" is not "tiktok:<username>" or "instagram:<username>"` });
+          return z.NEVER;
+        }
+        return id.value;
+      }),
+  )
+  .max(20);
 const ROLE_VALUES = ["client", "contractor", "vendor", "partner", "investor", "team", "prospect", "advisor", "other"] as const;
 const FACT_KINDS = ["commitment", "decision", "price", "followup", "issue", "preference", "other"] as const;
 
@@ -18,6 +35,7 @@ export const PROPOSAL_SCHEMAS = {
       name: z.string().trim().min(1).max(200),
       emails: strList.optional(),
       phones: strList.optional(),
+      handles: handleList.optional(),
       location: z.string().trim().max(200).optional(),
       website: z.string().trim().max(300).optional(),
       notes: z.string().max(2000).optional(),
@@ -32,6 +50,7 @@ export const PROPOSAL_SCHEMAS = {
           name: z.string().trim().min(1).max(200).optional(),
           emails: strList.optional(),
           phones: strList.optional(),
+          handles: handleList.optional(),
           location: z.string().trim().max(200).nullable().optional(),
           website: z.string().trim().max(300).nullable().optional(),
           notes: z.string().max(5000).nullable().optional(),
@@ -72,8 +91,8 @@ const schema = {
   item_type: z.enum(["new_party", "party_edit", "link_party_interaction", "link_project_interaction", "new_fact", "new_relationship"]).describe("What is being proposed."),
   proposal: z.record(z.string(), z.unknown()).describe(
     "The proposed change, shaped by item_type: " +
-      "new_party {kind: person|org, name, emails?, phones?, location?, website?, notes?, role?: {workspace_id, role, market?, detail?}}; " +
-      "party_edit {party_id, changes: {name?, emails?, phones?, location?, website?, notes?}}; " +
+      "new_party {kind: person|org, name, emails?, phones?, handles? (\"tiktok:<username>\" / \"instagram:<username>\"), location?, website?, notes?, role?: {workspace_id, role, market?, detail?}}; " +
+      "party_edit {party_id, changes: {name?, emails?, phones?, handles?, location?, website?, notes?}}; " +
       "link_party_interaction {party_id, interaction_id, speaker_label?, confidence?}; " +
       "link_project_interaction {project_id, interaction_id}; " +
       "new_fact {interaction_id, kind: commitment|decision|price|followup|issue|preference|other, text, owner_party_id?, about_party_id?, project_id?, amount?, due_date?, quote_start_sec?, confidence?}; " +

@@ -8,6 +8,8 @@
 //                         source (voice memos, call recordings, notes) + interactions via mac_collector
 //   iPhone Shortcut       api_tokens (purpose ios_shortcut) + import_runs source ios_shortcut
 //   Google Meet, per acct message_accounts (provider meet) + interactions source_ref meet:<account>:…
+//   TikTok DMs            api_tokens (purpose social_dm) + import_runs source tiktok
+//   Instagram DMs, per acct message_accounts (provider instagram) + interactions source_ref instagram:<username>:…
 //   Twilio calls          tracked_numbers + calls + interactions source contractor_call
 //
 // Status: live | never_run (configured but nothing has run) | not_configured | erroring. A
@@ -79,6 +81,8 @@ export async function buildSources(pool: pg.Pool, config: Config, now = new Date
   rows.push(await zoomRow(pool, now));
   rows.push(...(await accountRows(pool, "gmail", now)));
   rows.push(await imessageRow(pool, now));
+  rows.push(await tiktokRow(pool, now));
+  rows.push(...(await accountRows(pool, "instagram", now)));
   rows.push(...(await macRows(pool, now)));
   rows.push(await shortcutRow(pool));
   rows.push(...(await accountRows(pool, "meet", now)));
@@ -117,8 +121,8 @@ async function zoomRow(pool: pg.Pool, now: Date): Promise<SourceRow> {
 }
 
 // ---- Gmail and Google Meet: one row per connected account ---------------------------------------
-async function accountRows(pool: pg.Pool, provider: "gmail" | "meet", now: Date): Promise<SourceRow[]> {
-  const label = provider === "gmail" ? "Gmail" : "Google Meet";
+async function accountRows(pool: pg.Pool, provider: "gmail" | "meet" | "instagram", now: Date): Promise<SourceRow[]> {
+  const label = provider === "gmail" ? "Gmail" : provider === "meet" ? "Google Meet" : "Instagram DMs";
   const { rows } = await pool.query(`select to_jsonb(a) as a from message_accounts a where provider = $1 order by id`, [provider]).catch(() => ({ rows: [] as Array<{ a: Record<string, unknown> }> }));
   if (!rows.length) {
     const c = await itemCounts(pool, `source = $1`, [provider]);
@@ -132,16 +136,20 @@ async function accountRows(pool: pg.Pool, provider: "gmail" | "meet", now: Date)
     const disabled = a.status === "disabled";
     const erroring = a.status === "error" || (!!a.last_error && (!synced || new Date(a.updated_at as string) >= new Date(synced)));
     const status: SourceStatus = disabled ? "not_configured" : erroring ? "erroring" : !synced && !(provider === "gmail" && a.history_id) ? "never_run" : "live";
-    const limit = provider === "gmail" ? 0.5 * HOUR : 2 * HOUR;
+    const limit = provider === "meet" ? 2 * HOUR : 0.5 * HOUR;
+    const expires = provider === "instagram" && a.token_expires_at ? new Date(a.token_expires_at as string) : null;
+    const expiring = expires && expires.getTime() - now.getTime() < 5 * 24 * HOUR ? `the Instagram token ${expires.getTime() < now.getTime() ? "has expired" : `expires ${expires.toISOString().slice(0, 10)}`}: connect again at /api/messages/instagram/connect` : null;
     const noRecordings = provider === "meet" && a.capability === "none_found";
     out.push(
       row(
         {
           id: `${provider}:${email}`,
           label,
-          detail: email,
+          detail: provider === "instagram" ? `@${email}` : email,
           status,
-          warning: status === "live" && synced && ago(synced, now) > limit ? `not synced in ${fmtAge(ago(synced, now))} (${provider === "gmail" ? "the sync runs every 10 minutes" : "the worker runs hourly"})` : null,
+          warning:
+            expiring ??
+            (status === "live" && synced && ago(synced, now) > limit ? `not synced in ${fmtAge(ago(synced, now))} (${provider === "meet" ? "the worker runs hourly" : "the sync runs every 10 minutes"})` : null),
           lastSuccessAt: synced,
           lastSeenAt: iso(a.updated_at) ?? synced,
           lastError: erroring ? short(a.last_error) : null,
@@ -173,6 +181,32 @@ async function runsOf(pool: pg.Pool, source: string) {
     [source],
   );
   return rows[0] as { latest: Record<string, unknown> | null; ok: Record<string, unknown> | null; n: number };
+}
+
+async function tiktokRow(pool: pg.Pool, now: Date): Promise<SourceRow> {
+  const [tokens, runs, c] = await Promise.all([liveTokens(pool, "ingest:messages", "social_dm"), runsOf(pool, "tiktok"), itemCounts(pool, `source = 'tiktok'`, [])]);
+  const lastSeenAt = iso(runs.latest?.finished_at ?? runs.latest?.started_at);
+  const status: SourceStatus = !tokens && !runs.n ? "not_configured" : !runs.n ? "never_run" : runs.latest?.ok === false ? "erroring" : "live";
+  const collector = ((runs.latest?.counts_in ?? {}) as Record<string, unknown>).collector_skipped as Record<string, number> | undefined;
+  return row(
+    {
+      id: "tiktok",
+      label: "TikTok DMs",
+      detail: "Mac collector",
+      status,
+      warning:
+        status !== "not_configured" && runs.n && ago(lastSeenAt, now) > 2 * HOUR
+          ? `no batch in ${fmtAge(ago(lastSeenAt, now))} (it runs every 30 minutes: is the Mac asleep, the launchd job unloaded, or TikTok signed out?)`
+          : collector?.login_required
+            ? "the collector's TikTok session is signed out: run it once by hand to sign in"
+            : null,
+      lastSuccessAt: iso(runs.ok?.finished_at),
+      lastSeenAt,
+      lastError: status === "erroring" ? `last batch had ${(runs.latest?.counts_out as Record<string, unknown> | undefined)?.errors ?? "some"} error(s)` : null,
+      note: !tokens && !runs.n ? "no TikTok DM collector token (Agents & API)" : null,
+    },
+    c,
+  );
 }
 
 async function imessageRow(pool: pg.Pool, now: Date): Promise<SourceRow> {

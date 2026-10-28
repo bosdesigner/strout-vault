@@ -103,6 +103,10 @@ const envSchema = z.object({
   // queued as unknown senders. Each connected Gmail account's address counts as his too.
   OWNER_PHONES: z.string().optional(),
   OWNER_EMAILS: z.string().optional(),
+  // Ben's social accounts, comma-separated "<platform>:<username>" (e.g. "tiktok:hemakesbigmoves").
+  // His side of a DM is told apart by the collector, so this only keeps his handles out of review.
+  // Each connected Instagram account counts as his too.
+  OWNER_HANDLES: z.string().optional(),
   OWNER_NAME: z.string().default("Ben"),
   // Directory holding message_routing.yml and message_blocklist.yml.
   MESSAGES_CONFIG_DIR: z.string().default("./config"),
@@ -121,6 +125,15 @@ const envSchema = z.object({
   // Authorized redirect URI: <PUBLIC_URL>/api/messages/meet/callback
   DRIVE_API_BASE: z.string().default("https://www.googleapis.com/drive/v3"),
   CALENDAR_API_BASE: z.string().default("https://www.googleapis.com/calendar/v3"),
+  // Instagram DMs (docs/SOCIAL_DMS.md): a Meta app with the Instagram API (Instagram Login),
+  // permissions instagram_business_basic + instagram_business_manage_messages and nothing else.
+  // Valid OAuth redirect URI: <PUBLIC_URL>/api/messages/instagram/callback
+  INSTAGRAM_APP_ID: z.string().optional(),
+  INSTAGRAM_APP_SECRET: z.string().optional(),
+  INSTAGRAM_AUTHORIZE_URL: z.string().default("https://www.instagram.com/oauth/authorize"),
+  INSTAGRAM_TOKEN_URL: z.string().default("https://api.instagram.com/oauth/access_token"),
+  INSTAGRAM_GRAPH_BASE: z.string().default("https://graph.instagram.com"),
+  INSTAGRAM_API_VERSION: z.string().default("v26.0"),
   // Include recordings that live in Workspace shared drives (corpora=allDrives). "0" for My Drive only.
   MEET_SHARED_DRIVES: z.enum(["0", "1"]).default("1"),
   // Days the first backfill reaches back (npm run messages:gmail -- --since overrides it).

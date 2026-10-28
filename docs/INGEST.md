@@ -21,6 +21,8 @@ total and last error, read from what each one actually wrote. A collector silent
 | Apple Notes | text notes (≥ 40 characters, not `Private`, not locked) | `note` / `apple_note` | Mac media collector | **new** → steps A, E |
 | Google Meet | recordings + the transcript Doc, participants from transcript and calendar | `meeting` / `meet` | hourly worker (`meet` step) | **new** → steps A, G |
 | Contractor calls | Twilio tracked numbers, recorded and forwarded | `call` / `contractor_call` | webhooks | code live, 0 numbers → step H |
+| TikTok DMs | DMs to @hemakesbigmoves, one thread per conversation per day, people matched by handle | `text_thread` / `tiktok` | Mac collector (browser), every 30 min | **new** → step I |
+| Instagram DMs | DMs to a Business/Creator account, via the official API | `text_thread` / `instagram` | 10-minute Repl + hourly worker (`instagram` step) | **new** → step I |
 
 ## Turn it on, in order
 
@@ -108,6 +110,13 @@ Buy a number in Twilio (<https://console.twilio.com/us1/develop/phone-numbers/ma
 at `https://strout-vault.replit.app/webhooks/twilio/voice`, set `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` on the web
 Repl, and record the number at <https://strout-vault.replit.app/access>. Sources: **Contractor calls** goes from "not
 configured" to "configured, never run", then live after the first recorded call.
+
+### I. TikTok and Instagram DMs
+
+Apply [`db/migrations/0011_social_dms.sql`](../db/migrations/0011_social_dms.sql) like step A, change the messages Repl's
+`WORKER_STEPS` to `gmail,instagram,embed`, then follow [`docs/SOCIAL_DMS.md`](SOCIAL_DMS.md): the TikTok collector on
+the Mac ([`collectors/tiktok/README.md`](../collectors/tiktok/README.md)) and the Instagram connect link. Sources:
+**TikTok DMs** and **Instagram DMs @<account>** rows.
 
 ## Notes
 

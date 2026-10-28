@@ -50,6 +50,8 @@ describe("GET /api/pipeline/sources", () => {
       "gmail:ben@stroutarch.example",
       "gmail:ben.strout@gmail.example",
       "imessage",
+      "tiktok",
+      "instagram",
       "mac:voice_memo",
       "mac:iphone_call",
       "mac:apple_note",
@@ -59,6 +61,9 @@ describe("GET /api/pipeline/sources", () => {
       "twilio",
     ]);
     expect(get("zoom")).toMatchObject({ status: "live", warning: null, items7d: 3 });
+    // Nothing set up for DMs in the demo: both say what to do.
+    expect(get("tiktok")).toMatchObject({ status: "not_configured", note: "no TikTok DM collector token (Agents & API)" });
+    expect(get("instagram")).toMatchObject({ status: "not_configured", note: "no account connected (/api/messages/instagram/connect)" });
     expect(get("gmail:ben@anotherstory.example")).toMatchObject({ status: "live", items24h: 3, items7d: 6, total: 6 });
     expect(get("gmail:ben@stroutarch.example")).toMatchObject({ status: "never_run", total: 0 });
     expect(get("gmail:ben.strout@gmail.example")).toMatchObject({ status: "erroring", lastError: "token refresh failed: invalid_grant" });

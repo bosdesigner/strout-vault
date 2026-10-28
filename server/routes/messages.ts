@@ -1,4 +1,6 @@
-// Owner-only: connecting Gmail accounts (OAuth, scope gmail.readonly and nothing else) and Google
+// Owner-only: connecting Instagram professional accounts (Instagram Login, instagram_business_basic +
+// instagram_business_manage_messages and nothing else; the 60-day token is encrypted at rest and
+// refreshed by the worker), connecting Gmail accounts (OAuth, scope gmail.readonly and nothing else) and Google
 // Meet accounts (a separate grant: drive.meet.readonly, plus calendar.events.readonly when asked
 // with ?calendar=1, and nothing else), and seeing their sync state. The refresh token is encrypted before it is stored and never sent
 // back to the browser. Nothing here sends, labels or changes mail.
@@ -9,6 +11,8 @@ import { encryptSecret } from "../messages/crypto.ts";
 import { exchangeCode, GMAIL_READONLY_SCOPE, GmailClient } from "../messages/gmail/api.ts";
 import { gmailConfigured } from "../messages/gmail/sync.ts";
 import { CALENDAR_EVENTS_READONLY_SCOPE, checkMeetScopes, DRIVE_MEET_READONLY_SCOPE } from "../meet/api.ts";
+import { exchangeInstagramCode, InstagramClient, INSTAGRAM_SCOPES } from "../messages/instagram/api.ts";
+import { instagramConfigured } from "../messages/instagram/sync.ts";
 
 /** The email inside a Google id_token (the code exchange's own response, straight from Google over TLS). */
 function idTokenEmail(idToken: string | undefined): string | null {
@@ -27,12 +31,12 @@ function sign(secret: string, payload: string, purpose: string): string {
   return crypto.createHmac("sha256", secret).update(`${purpose}-connect:${payload}`).digest("base64url");
 }
 
-export function makeState(secret: string, email: string, now = Date.now(), purpose: "gmail" | "meet" = "gmail"): string {
+export function makeState(secret: string, email: string, now = Date.now(), purpose: "gmail" | "meet" | "instagram" = "gmail"): string {
   const payload = Buffer.from(JSON.stringify({ e: email, x: now + STATE_TTL_MS, n: crypto.randomBytes(8).toString("hex") })).toString("base64url");
   return `${payload}.${sign(secret, payload, purpose)}`;
 }
 
-export function checkState(secret: string, state: string, email: string, now = Date.now(), purpose: "gmail" | "meet" = "gmail"): boolean {
+export function checkState(secret: string, state: string, email: string, now = Date.now(), purpose: "gmail" | "meet" | "instagram" = "gmail"): boolean {
   const [payload, mac] = state.split(".");
   if (!payload || !mac) return false;
   const expected = sign(secret, payload, purpose);
@@ -56,8 +60,8 @@ export function messagesRouter(ctx: AppContext): Router {
       const { rows } = await ctx.pool.query(
         `select id, provider, account_email, scope, history_id is not null as syncing, status, last_synced_at, last_error, created_at from message_accounts order by id`,
       );
-      const runs = await ctx.pool.query(`select source, counts_out, finished_at from import_runs where source in ('gmail', 'imessage') order by id desc limit 10`);
-      res.json({ configured: gmailConfigured(c), items: rows, recentRuns: runs.rows });
+      const runs = await ctx.pool.query(`select source, counts_out, finished_at from import_runs where source in ('gmail', 'imessage', 'tiktok', 'instagram') order by id desc limit 10`);
+      res.json({ configured: gmailConfigured(c), instagramConfigured: instagramConfigured(c), items: rows, recentRuns: runs.rows });
     }),
   );
 
@@ -164,6 +168,63 @@ export function messagesRouter(ctx: AppContext): Router {
       res
         .type("text")
         .send(`Connected ${email} for Google Meet (read-only: ${granted.includes(CALENDAR_EVENTS_READONLY_SCOPE) ? "Meet recordings and transcripts, calendar events" : "Meet recordings and transcripts"}). The worker picks up new recordings on its next run; backfill with: npm run messages:meet -- --account ${email} --since 90 --dry-run`);
+    }),
+  );
+
+  // ---- Instagram: Instagram Login for a professional (Business or Creator) account. ----
+  const igRedirectUri = () => `${c.PUBLIC_URL.replace(/\/$/, "")}/api/messages/instagram/callback`;
+  r.get(
+    "/instagram/connect",
+    wrap(async (req, res) => {
+      if (!instagramConfigured(c)) throw new HttpError(503, "Instagram is not configured: set INSTAGRAM_APP_ID, INSTAGRAM_APP_SECRET and MESSAGES_ENCRYPTION_KEY");
+      if (!c.PUBLIC_URL) throw new HttpError(503, "PUBLIC_URL is not set");
+      const url = new URL(c.INSTAGRAM_AUTHORIZE_URL);
+      url.searchParams.set("client_id", c.INSTAGRAM_APP_ID!);
+      url.searchParams.set("redirect_uri", igRedirectUri());
+      url.searchParams.set("response_type", "code");
+      url.searchParams.set("scope", INSTAGRAM_SCOPES.join(","));
+      url.searchParams.set("enable_fb_login", "0");
+      url.searchParams.set("force_reauth", "true");
+      url.searchParams.set("state", makeState(c.SESSION_SECRET, req.session!.email, Date.now(), "instagram"));
+      res.redirect(url.toString());
+    }),
+  );
+
+  r.get(
+    "/instagram/callback",
+    wrap(async (req, res) => {
+      if (!instagramConfigured(c)) throw new HttpError(503, "Instagram is not configured");
+      const state = String(req.query.state ?? "");
+      if (!checkState(c.SESSION_SECRET, state, req.session!.email, Date.now(), "instagram")) throw new HttpError(400, "invalid or expired state; start again from /api/messages/instagram/connect");
+      if (req.query.error) throw new HttpError(400, `Instagram returned ${String(req.query.error_reason ?? req.query.error).slice(0, 60)}`);
+      const code = String(req.query.code ?? "");
+      if (!code) throw new HttpError(400, "missing code");
+      const short = await exchangeInstagramCode({ tokenUrl: c.INSTAGRAM_TOKEN_URL, appId: c.INSTAGRAM_APP_ID!, appSecret: c.INSTAGRAM_APP_SECRET!, redirectUri: igRedirectUri(), code, fetchImpl: ctx.fetchImpl });
+      const extra = short.permissions.filter((p) => !(INSTAGRAM_SCOPES as readonly string[]).includes(p));
+      if (extra.length) throw new HttpError(400, `Instagram granted more than ${INSTAGRAM_SCOPES.join(" + ")} (${extra.join(", ")}); refusing to store it`);
+      if (short.permissions.length && !short.permissions.includes("instagram_business_manage_messages")) throw new HttpError(400, "Instagram did not grant instagram_business_manage_messages; connect again and allow messages");
+      if (!short.accessToken) throw new HttpError(502, "Instagram returned no access token");
+      const sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
+      const long = await new InstagramClient({ graphBase: c.INSTAGRAM_GRAPH_BASE, version: c.INSTAGRAM_API_VERSION, accessToken: short.accessToken, fetchImpl: ctx.fetchImpl, sleep }).exchangeLongLived(c.INSTAGRAM_APP_SECRET!);
+      const who = await new InstagramClient({ graphBase: c.INSTAGRAM_GRAPH_BASE, version: c.INSTAGRAM_API_VERSION, accessToken: long.accessToken, fetchImpl: ctx.fetchImpl, sleep }).me();
+      if (!who.username) throw new HttpError(502, "could not read which Instagram account this is");
+      await ctx.pool.query(
+        `insert into message_accounts (provider, account_email, refresh_token_enc, scope, status, created_by, token_expires_at, detail)
+         values ('instagram', $1, $2, $3, 'active', $4, $5, $6::jsonb)
+         on conflict (provider, account_email) do update set refresh_token_enc = excluded.refresh_token_enc, scope = excluded.scope, status = 'active', last_error = null,
+           token_expires_at = excluded.token_expires_at, detail = coalesce(message_accounts.detail, '{}'::jsonb) || excluded.detail, updated_at = now()`,
+        [
+          who.username,
+          encryptSecret(long.accessToken, c.MESSAGES_ENCRYPTION_KEY!),
+          (short.permissions.length ? short.permissions : [...INSTAGRAM_SCOPES]).join(" "),
+          req.session!.email,
+          long.expiresAt,
+          JSON.stringify({ ig_user_id: who.userId || null, app_user_id: who.id || null, token_refreshed_at: new Date().toISOString() }),
+        ],
+      );
+      res
+        .type("text")
+        .send(`Connected @${who.username} (Instagram DMs, read-only). The worker reads new DMs on its next run; to pull what the API still has now: npm run messages:instagram -- --account ${who.username} --backfill --dry-run`);
     }),
   );
 

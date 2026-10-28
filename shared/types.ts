@@ -174,6 +174,8 @@ export interface PersonDetail {
   name: string;
   emails: string[];
   phones: string[];
+  /** "tiktok:<username>" / "instagram:<username>" */
+  handles?: string[];
   location: string | null;
   website: string | null;
   notes: string | null;

@@ -15,6 +15,8 @@ import {
 } from "../services/people.ts";
 import { HttpError, intId, parse, wrap } from "./util.ts";
 import { refileAfterChange } from "../workspaces/refileHook.ts";
+import { normalizeIdentifier } from "../messages/identity.ts";
+import { linkMessageSender } from "../services/review.ts";
 import { requireOwner, scopeOf } from "../auth/scope.ts";
 
 const listSchema = z.object({
@@ -28,11 +30,28 @@ const listSchema = z.object({
 });
 
 const strList = z.array(z.string().trim().min(1).max(200)).max(20);
+/** "@user" on TikTok or Instagram, sent as "tiktok:@user" / "instagram:user"; stored as "tiktok:user". */
+const handleList = z
+  .array(
+    z
+      .string()
+      .trim()
+      .transform((v, c) => {
+        const id = normalizeIdentifier(v);
+        if (id?.kind !== "handle") {
+          c.addIssue({ code: "custom", message: `"${v.slice(0, 80)}" is not tiktok:<username> or instagram:<username>` });
+          return z.NEVER;
+        }
+        return id.value;
+      }),
+  )
+  .max(20);
 const patchSchema = z
   .object({
     name: z.string().trim().min(1).max(200).optional(),
     emails: strList.optional(),
     phones: strList.optional(),
+    handles: handleList.optional(),
     location: z.string().trim().max(200).nullable().optional(),
     website: z.string().trim().max(300).nullable().optional(),
     notes: z.string().max(5000).nullable().optional(),
@@ -44,6 +63,7 @@ const createSchema = z.object({
   name: z.string().trim().min(1).max(200),
   emails: strList.optional(),
   phones: strList.optional(),
+  handles: handleList.optional(),
   location: z.string().trim().max(200).nullable().optional(),
   /** Optional first role so a new person lands in a workspace right away. */
   role: z.object({ workspaceId: z.string().max(100), role: z.enum(ROLE_VALUES), status: z.enum(ROLE_STATUS_VALUES).optional(), market: z.string().max(100).nullable().optional(), detail: z.string().max(300).nullable().optional() }).optional(),
@@ -64,6 +84,34 @@ const rolePatchSchema = z
     detail: z.string().trim().max(300).nullable().optional(),
   })
   .strict();
+
+/**
+ * A TikTok or Instagram handle added to someone already in the vault (the usual way a DM sender
+ * turns out to be a known contractor): every stored DM from that handle is pointed at them, the
+ * open "unknown account" review item for it is closed, and Inbox threads they are on are refiled.
+ */
+async function linkHandles(ctx: AppContext, partyId: number, handles: string[]): Promise<void> {
+  const db = await ctx.pool.connect();
+  try {
+    await db.query("begin");
+    const name = (await db.query(`select name from parties where id = $1`, [partyId])).rows[0]?.name as string;
+    for (const h of handles) {
+      await linkMessageSender(db, partyId, h, name);
+      await db.query(
+        `update review_queue set status = 'rejected', decided_at = now(), reason = coalesce(reason, '') || ' (linked to an existing person)'
+          where item_type = 'new_party' and status = 'open' and proposal->'evidence'->>'identifier' = $1`,
+        [h],
+      );
+    }
+    await db.query("commit");
+  } catch (err) {
+    await db.query("rollback").catch(() => {});
+    throw err;
+  } finally {
+    db.release();
+  }
+  await refileAfterChange(ctx, [partyId]);
+}
 
 export function peopleRouter(ctx: AppContext): Router {
   const r = Router();
@@ -101,6 +149,7 @@ export function peopleRouter(ctx: AppContext): Router {
     wrap(async (req, res) => {
       const body = parse(createSchema, req.body);
       const id = await createParty(ctx.pool, body);
+      if (body.handles?.length) await linkHandles(ctx, id, body.handles);
       if (body.role) {
         const ws = await ctx.pool.query(`select 1 from workspaces where id = $1`, [body.role.workspaceId]);
         if (!ws.rowCount) throw new HttpError(400, "unknown workspace");
@@ -125,7 +174,10 @@ export function peopleRouter(ctx: AppContext): Router {
     wrap(async (req, res) => {
       const id = intId(req.params.id);
       const patch = parse(patchSchema, req.body);
+      const before = patch.handles ? ((await ctx.pool.query(`select handles from parties where id = $1`, [id])).rows[0]?.handles as string[] | undefined) ?? [] : [];
       if (!(await updateParty(ctx.pool, id, patch))) throw new HttpError(404, "person not found");
+      const added = (patch.handles ?? []).filter((h) => !before.includes(h));
+      if (added.length) await linkHandles(ctx, id, added);
       res.json(await getPartyDetail(ctx.pool, id));
     }),
   );

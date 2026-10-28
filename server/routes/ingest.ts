@@ -6,6 +6,10 @@
 // redaction, party matching and routing as Gmail (server/messages/ingest.ts); the collector's
 // own filtering is a convenience, never the guard. The response carries counts, never text.
 //
+// POST /api/ingest/social: TikTok (and, for a browser fallback, Instagram) DMs from the Mac
+// collector (collectors/tiktok). Same ingest:messages token scope, same pipeline; conversations
+// become text_thread interactions with source tiktok/instagram, matched to people by handle.
+//
 // /api/ingest/device/*: the Mac media collector and the iPhone Shortcut (ingest:device tokens):
 // presign, finalize, note, runs (server/device/ingest.ts). Responses carry ids and counts.
 import express, { Router, type NextFunction, type Request, type Response } from "express";
@@ -31,6 +35,7 @@ import {
 import type { ZodType } from "zod";
 import { ingestBatchSchema, imessageThreads } from "../messages/imessage.ts";
 import { countsOut, ingestThreads } from "../messages/ingest.ts";
+import { MAX_SOCIAL_MESSAGES, socialBatchSchema, socialMessageCount, socialThreads } from "../messages/social.ts";
 import { ownerIdentity } from "../messages/identity.ts";
 import { loadMessageRules } from "../messages/rules.ts";
 
@@ -73,6 +78,54 @@ export function ingestRouter(ctx: AppContext): Router {
       res.json({ ok: summary.errors.length === 0, threads: summary.threadsIn, messages: summary.messagesIn, ...countsOut(summary) });
     } catch (err) {
       console.error(`[ingest] messages batch failed: ${(err as Error).message}`);
+      res.status(500).json({ error: "internal_error" });
+    }
+  });
+
+  r.post("/social", limiter, express.json({ limit: "20mb" }), async (req: Request, res: Response) => {
+    const auth = req.get("authorization") ?? "";
+    const m = /^Bearer\s+(\S+)$/i.exec(auth);
+    if (!m) {
+      res.status(401).set("WWW-Authenticate", "Bearer").json({ error: "unauthenticated" });
+      return;
+    }
+    const who = await verifyIngestToken(ctx.pool, m[1]);
+    if (!who) {
+      res.status(401).set("WWW-Authenticate", 'Bearer error="invalid_token"').json({ error: "invalid_token" });
+      return;
+    }
+    if (who === "forbidden") {
+      res.status(403).json({ error: "insufficient_scope", message: "this token does not carry ingest:messages" });
+      return;
+    }
+    const parsed = socialBatchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      // Paths and messages only: never echo the submitted values.
+      res.status(400).json({ error: "invalid_batch", issues: parsed.error.issues.slice(0, 10).map((i) => `${i.path.join(".")}: ${i.message.replace(/,? received .*$/s, "")}`) });
+      return;
+    }
+    if (socialMessageCount(parsed.data) > MAX_SOCIAL_MESSAGES) {
+      res.status(413).json({ error: "batch_too_large", message: `at most ${MAX_SOCIAL_MESSAGES} messages per batch` });
+      return;
+    }
+    try {
+      const rules = loadMessageRules(ctx.config.MESSAGES_CONFIG_DIR);
+      const owner = ownerIdentity(ctx.config, [], [`${parsed.data.platform}:${parsed.data.account}`]);
+      const summary = await ingestThreads(ctx.pool, socialThreads(parsed.data), {
+        owner,
+        rules,
+        importSource: parsed.data.platform,
+        countsIn: {
+          token: `pat:${who.id}`,
+          account: parsed.data.account,
+          conversations: parsed.data.conversations.length,
+          collector: parsed.data.collector ?? null,
+          collector_skipped: parsed.data.collector_counts ?? {},
+        },
+      });
+      res.json({ ok: summary.errors.length === 0, threads: summary.threadsIn, messages: summary.messagesIn, ...countsOut(summary) });
+    } catch (err) {
+      console.error(`[ingest] social batch failed: ${(err as Error).message}`);
       res.status(500).json({ error: "internal_error" });
     }
   });

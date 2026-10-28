@@ -134,6 +134,7 @@ export async function getPartyDetail(pool: pg.Pool, id: number) {
     name: party.name,
     emails: party.emails ?? [],
     phones: party.phones ?? [],
+    handles: party.handles ?? [],
     location: party.location,
     website: party.website,
     notes: party.notes,
@@ -193,6 +194,8 @@ export interface PartyPatch {
   name?: string;
   emails?: string[];
   phones?: string[];
+  /** Normalised "<platform>:<username>" (see normalizeHandle). */
+  handles?: string[];
   location?: string | null;
   website?: string | null;
   notes?: string | null;
@@ -208,6 +211,7 @@ export async function updateParty(pool: pg.Pool, id: number, patch: PartyPatch):
   if (patch.name !== undefined) sets.push(`name = ${p(patch.name)}`);
   if (patch.emails !== undefined) sets.push(`emails = ${p(patch.emails)}::text[]`);
   if (patch.phones !== undefined) sets.push(`phones = ${p(patch.phones)}::text[]`);
+  if (patch.handles !== undefined) sets.push(`handles = ${p(patch.handles)}::text[]`);
   if (patch.location !== undefined) sets.push(`location = ${p(patch.location)}`);
   if (patch.website !== undefined) sets.push(`website = ${p(patch.website)}`);
   if (patch.notes !== undefined) sets.push(`notes = ${p(patch.notes)}`);
@@ -217,11 +221,23 @@ export async function updateParty(pool: pg.Pool, id: number, patch: PartyPatch):
   return (res.rowCount ?? 0) > 0;
 }
 
-export async function createParty(pool: pg.Pool, input: { kind: "person" | "org"; name: string; emails?: string[]; phones?: string[]; location?: string | null }) {
-  const { rows } = await pool.query(
-    `insert into parties (kind, name, emails, phones, location) values ($1, $2, $3::text[], $4::text[], $5) returning id`,
-    [input.kind, input.name.trim(), input.emails ?? [], input.phones ?? [], input.location ?? null],
-  );
+export async function createParty(pool: pg.Pool, input: { kind: "person" | "org"; name: string; emails?: string[]; phones?: string[]; handles?: string[]; location?: string | null }) {
+  const { rows } = input.handles?.length
+    ? await pool.query(`insert into parties (kind, name, emails, phones, handles, location) values ($1, $2, $3::text[], $4::text[], $5::text[], $6) returning id`, [
+        input.kind,
+        input.name.trim(),
+        input.emails ?? [],
+        input.phones ?? [],
+        input.handles,
+        input.location ?? null,
+      ])
+    : await pool.query(`insert into parties (kind, name, emails, phones, location) values ($1, $2, $3::text[], $4::text[], $5) returning id`, [
+        input.kind,
+        input.name.trim(),
+        input.emails ?? [],
+        input.phones ?? [],
+        input.location ?? null,
+      ]);
   return rows[0].id as number;
 }
 

@@ -13,3 +13,8 @@
 
 # phones:
 #   - "+1 (800) 555-0100"
+
+# TikTok / Instagram accounts whose DMs are never stored ("<platform>:<username>", @ optional).
+# handles:
+#   - "tiktok:@some_spam_account"
+#   - "instagram:@giveaway.bot"

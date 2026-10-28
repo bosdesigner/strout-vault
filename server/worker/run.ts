@@ -12,6 +12,8 @@ import { processExtraction, type ExtractSummary } from "./extract.ts";
 import { processLeads } from "./leads.ts";
 import { processGmail } from "./gmail.ts";
 import { processMeet } from "./meet.ts";
+import { processInstagram } from "./instagram.ts";
+import type { InstagramSyncSummary } from "../messages/instagram/sync.ts";
 import { refileInbox, type RefileSummary } from "../workspaces/refile.ts";
 import { loadMessageRules } from "../messages/rules.ts";
 import { ownerIdentity } from "../messages/identity.ts";
@@ -22,14 +24,14 @@ import { processCuts, type CutSummary } from "./cut.ts";
 import { buildReport, type PipelineReport } from "./report.ts";
 import { setState } from "./sync.ts";
 
-export type Step = "zoom" | "meet" | "leads" | "gmail" | "refile" | "transcribe" | "embed" | "extract" | "scout" | "cut" | "report";
-export const ALL_STEPS: Step[] = ["zoom", "meet", "leads", "gmail", "refile", "transcribe", "embed", "extract", "scout", "cut", "report"];
+export type Step = "zoom" | "meet" | "leads" | "gmail" | "instagram" | "refile" | "transcribe" | "embed" | "extract" | "scout" | "cut" | "report";
+export const ALL_STEPS: Step[] = ["zoom", "meet", "leads", "gmail", "instagram", "refile", "transcribe", "embed", "extract", "scout", "cut", "report"];
 /**
  * Steps a run may do without the main worker lock: the 10-minute messages deployment runs
- * "gmail,embed" while the hourly run may still be transcribing. Each of those steps takes its
+ * "gmail,instagram,embed" while the hourly run may still be transcribing. Each of those steps takes its
  * own advisory lock, so two of them never overlap.
  */
-export const LIGHT_STEPS: Step[] = ["gmail", "embed"];
+export const LIGHT_STEPS: Step[] = ["gmail", "instagram", "embed"];
 
 export interface RunOptions {
   trigger?: "schedule" | "manual" | "test";
@@ -43,6 +45,7 @@ export interface RunSummary {
   refile?: RefileSummary;
   leads?: LeadSyncSummary;
   gmail?: GmailSyncSummary;
+  instagram?: InstagramSyncSummary;
   transcribe?: TranscribeSummary;
   embed?: EmbedSummary;
   extract?: ExtractSummary;
@@ -80,6 +83,7 @@ export interface WorkerConfigSnapshot {
   leadsAirtable?: boolean;
   gmailConfigured?: boolean;
   meetConfigured?: boolean;
+  instagramConfigured?: boolean;
 }
 
 export function configSnapshot(ctx: WorkerContext): WorkerConfigSnapshot {
@@ -106,6 +110,7 @@ export function configSnapshot(ctx: WorkerContext): WorkerConfigSnapshot {
     leadsAirtable: !!c.AIRTABLE_TOKEN,
     gmailConfigured: !!(c.GOOGLE_CLIENT_ID && c.GOOGLE_CLIENT_SECRET && c.MESSAGES_ENCRYPTION_KEY),
     meetConfigured: !!(c.GOOGLE_CLIENT_ID && c.GOOGLE_CLIENT_SECRET && c.MESSAGES_ENCRYPTION_KEY),
+    instagramConfigured: !!(c.INSTAGRAM_APP_ID && c.INSTAGRAM_APP_SECRET && c.MESSAGES_ENCRYPTION_KEY),
     embeddingProvider: c.EMBEDDING_PROVIDER,
     embeddingModel: c.EMBEDDING_PROVIDER === "off" ? null : c.EMBEDDING_MODEL ?? (c.EMBEDDING_PROVIDER === "voyage" ? "voyage-3.5" : c.EMBEDDING_PROVIDER === "openai" ? "text-embedding-3-small" : "fake-hash-1024"),
   };
@@ -158,6 +163,7 @@ export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Prom
         else if (step === "refile" && !opts.dryRun) summary.refile = await refileInbox(ctx.pool, loadMessageRules(ctx.config.MESSAGES_CONFIG_DIR), ownerIdentity(ctx.config));
         else if (step === "leads") summary.leads = await processLeads(ctx, { dryRun: opts.dryRun });
         else if (step === "gmail") summary.gmail = await processGmail(ctx, { dryRun: opts.dryRun });
+        else if (step === "instagram") summary.instagram = await processInstagram(ctx, { dryRun: opts.dryRun });
         else if (step === "transcribe" && !opts.dryRun) summary.transcribe = await processTranscriptions(ctx);
         else if (step === "embed" && !opts.dryRun) summary.embed = await processEmbeddings(ctx);
         else if (step === "extract" && !opts.dryRun) summary.extract = await processExtraction(ctx);
@@ -229,6 +235,15 @@ export function formatRunSummary(s: RunSummary): string {
         : `gmail: ${g.accounts.map((a) => `${a.account} ${a.error ? "FAILED" : `${a.mode} ${a.threads}`}`).join(", ")}; ${i.created} new thread(s), ${i.updated} updated, ${i.unchanged} unchanged; skipped ${Object.entries(i.skipped).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}; ${i.reviewNewParty} unknown sender(s), ${i.reviewWorkspace} workspace decision(s) queued${g.dryRun ? " (dry run, nothing written)" : ""}${g.stoppedEarly ? `; stopped early: ${g.stoppedEarly}` : ""}`,
     );
   }
+  if (s.instagram) {
+    const g = s.instagram;
+    const i = g.ingest;
+    lines.push(
+      g.skipped
+        ? `instagram: off (${g.skipped})`
+        : `instagram: ${g.accounts.map((a) => `@${a.account} ${a.error ? "FAILED" : `${a.mode} ${a.conversations} conversation(s)`}`).join(", ")}; ${i.created} new thread(s), ${i.updated} updated, ${i.unchanged} unchanged; ${i.reviewNewParty} unknown account(s), ${i.reviewWorkspace} workspace decision(s) queued${g.dryRun ? " (dry run, nothing written)" : ""}${g.stoppedEarly ? `; stopped early: ${g.stoppedEarly}` : ""}`,
+    );
+  }
   if (s.transcribe) {
     const t = s.transcribe;
     lines.push(
@@ -270,7 +285,7 @@ export function formatRunSummary(s: RunSummary): string {
     );
   }
   // Per-item errors from each step, a few of them: the full lists live in the run's summary JSON.
-  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.meet?.errors ?? []), ...(s.leads?.errors ?? []), ...(s.gmail?.errors ?? []), ...(s.gmail?.ingest.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.embed?.errors ?? []), ...(s.extract?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
+  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.meet?.errors ?? []), ...(s.leads?.errors ?? []), ...(s.gmail?.errors ?? []), ...(s.gmail?.ingest.errors ?? []), ...(s.instagram?.errors ?? []), ...(s.instagram?.ingest.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.embed?.errors ?? []), ...(s.extract?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
   if (itemErrors.length) {
     const shown = itemErrors.slice(0, 3);
     lines.push(`errors: ${shown.join(" | ")}${itemErrors.length > shown.length ? ` | …and ${itemErrors.length - shown.length} more` : ""}`);

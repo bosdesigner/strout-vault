@@ -217,7 +217,7 @@ function uniqueList(existing: unknown, add: unknown): string[] {
  * are in lists them as a participant. Workspaces are not re-routed; inbox threads keep their own
  * workspace_assignment review rows.
  */
-async function linkMessageSender(db: pg.PoolClient, partyId: number, identifier: string, name: string): Promise<string[]> {
+export async function linkMessageSender(db: pg.PoolClient, partyId: number, identifier: string, name: string): Promise<string[]> {
   const threads = await db.query<{ id: number }>(
     `select id from interactions where kind in ('text_thread', 'email_thread') and participants_raw @> $1::jsonb`,
     [JSON.stringify([{ identifier }])],
@@ -245,15 +245,28 @@ async function linkMessageSender(db: pg.PoolClient, partyId: number, identifier:
 const APPLIERS: Record<ProposalType, Applier> = {
   async new_party(db, raw, row) {
     const p = shape("new_party", raw);
-    const ins = await db.query<{ id: number }>(`insert into parties (kind, name, emails, phones, location, website, notes) values ($1, $2, $3, $4, $5, $6, $7) returning id`, [
-      p.kind,
-      p.name,
-      p.emails ?? [],
-      p.phones ?? [],
-      p.location ?? null,
-      p.website ?? null,
-      p.notes ?? null,
-    ]);
+    const handles = (p.handles as string[] | undefined) ?? [];
+    const ins = handles.length
+      ? await db.query<{ id: number }>(`insert into parties (kind, name, emails, phones, handles, location, website, notes) values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`, [
+          p.kind,
+          p.name,
+          p.emails ?? [],
+          p.phones ?? [],
+          handles,
+          p.location ?? null,
+          p.website ?? null,
+          p.notes ?? null,
+        ])
+      : // Before migration 0011 there is no handles column: a party without handles still saves.
+        await db.query<{ id: number }>(`insert into parties (kind, name, emails, phones, location, website, notes) values ($1, $2, $3, $4, $5, $6, $7) returning id`, [
+          p.kind,
+          p.name,
+          p.emails ?? [],
+          p.phones ?? [],
+          p.location ?? null,
+          p.website ?? null,
+          p.notes ?? null,
+        ]);
     const partyId = ins.rows[0].id;
     const out = [`parties #${partyId}`];
     const evidence = raw.evidence as { identifier?: unknown } | undefined;
@@ -278,7 +291,7 @@ const APPLIERS: Record<ProposalType, Applier> = {
   async party_edit(db, raw) {
     const p = shape("party_edit", raw);
     const changes = p.changes as Record<string, unknown>;
-    const { rows } = await db.query(`select emails, phones from parties where id = $1 for update`, [p.party_id]);
+    const { rows } = await db.query(`select * from parties where id = $1 for update`, [p.party_id]);
     if (!rows[0]) throw new ReviewError(400, `unknown party ${String(p.party_id)}`);
     // Emails and phones are added to what is there, never replaced: an agent sees one recording, not the whole record.
     const sets: string[] = [];
@@ -290,6 +303,7 @@ const APPLIERS: Record<ProposalType, Applier> = {
     if (changes.name !== undefined) set("name", changes.name);
     if (changes.emails !== undefined) set("emails", uniqueList(rows[0].emails, changes.emails));
     if (changes.phones !== undefined) set("phones", uniqueList(rows[0].phones, changes.phones));
+    if (changes.handles !== undefined) set("handles", uniqueList(rows[0].handles ?? [], changes.handles));
     for (const col of ["location", "website", "notes"]) if (changes[col] !== undefined) set(col, changes[col]);
     await db.query(`update parties set ${sets.join(", ")}, updated_at = now() where id = $1`, params);
     return [`parties #${String(p.party_id)} (${Object.keys(changes).join(", ")})`];

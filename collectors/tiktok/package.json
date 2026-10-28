@@ -1,0 +1,19 @@
+{
+  "name": "strout-vault-tiktok-collector",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reads the TikTok DM inbox in its own Chrome profile and sends new messages to Strout Vault (POST /api/ingest/social).",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "login": "node collector.mjs --login",
+    "probe": "node collector.mjs --probe",
+    "dry-run": "node collector.mjs --dry-run",
+    "start": "node collector.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "1.56.1"
+  }
+}
