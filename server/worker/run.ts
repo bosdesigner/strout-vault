@@ -9,6 +9,7 @@ import { processTranscriptions, type TranscribeSummary } from "./transcribe.ts";
 import { processEmbeddings, type EmbedSummary } from "./embed.ts";
 import { processScouting, type ScoutSummary } from "./scout.ts";
 import { processExtraction, type ExtractSummary } from "./extract.ts";
+import { processFollowthrough, type FollowthroughSummary } from "./followthrough.ts";
 import { processLeads } from "./leads.ts";
 import { processGmail } from "./gmail.ts";
 import { processMeet } from "./meet.ts";
@@ -22,8 +23,8 @@ import { processCuts, type CutSummary } from "./cut.ts";
 import { buildReport, type PipelineReport } from "./report.ts";
 import { setState } from "./sync.ts";
 
-export type Step = "zoom" | "meet" | "leads" | "gmail" | "refile" | "transcribe" | "embed" | "extract" | "scout" | "cut" | "report";
-export const ALL_STEPS: Step[] = ["zoom", "meet", "leads", "gmail", "refile", "transcribe", "embed", "extract", "scout", "cut", "report"];
+export type Step = "zoom" | "meet" | "leads" | "gmail" | "refile" | "transcribe" | "embed" | "extract" | "followthrough" | "scout" | "cut" | "report";
+export const ALL_STEPS: Step[] = ["zoom", "meet", "leads", "gmail", "refile", "transcribe", "embed", "extract", "followthrough", "scout", "cut", "report"];
 /**
  * Steps a run may do without the main worker lock: the 10-minute messages deployment runs
  * "gmail,embed" while the hourly run may still be transcribing. Each of those steps takes its
@@ -46,6 +47,7 @@ export interface RunSummary {
   transcribe?: TranscribeSummary;
   embed?: EmbedSummary;
   extract?: ExtractSummary;
+  followthrough?: FollowthroughSummary;
   scout?: ScoutSummary;
   cut?: CutSummary;
   report?: PipelineReport;
@@ -76,6 +78,9 @@ export interface WorkerConfigSnapshot {
   extractModel?: string;
   extractBudgetUsd?: number;
   extractWorkspaces?: string;
+  followthroughConfigured?: boolean;
+  followthroughModel?: string;
+  followthroughBudgetUsd?: number;
   leadsPlatform?: boolean;
   leadsAirtable?: boolean;
   gmailConfigured?: boolean;
@@ -102,6 +107,9 @@ export function configSnapshot(ctx: WorkerContext): WorkerConfigSnapshot {
     extractModel: c.EXTRACT_MODEL,
     extractBudgetUsd: c.ANTHROPIC_API_KEY ? c.EXTRACT_MONTHLY_BUDGET_USD : 0,
     extractWorkspaces: c.EXTRACT_WORKSPACES,
+    followthroughConfigured: !!c.ANTHROPIC_API_KEY && c.FOLLOWTHROUGH_MONTHLY_BUDGET_USD > 0,
+    followthroughModel: c.FOLLOWTHROUGH_MODEL,
+    followthroughBudgetUsd: c.ANTHROPIC_API_KEY ? c.FOLLOWTHROUGH_MONTHLY_BUDGET_USD : 0,
     leadsPlatform: !!c.LEADS_DATABASE_URL,
     leadsAirtable: !!c.AIRTABLE_TOKEN,
     gmailConfigured: !!(c.GOOGLE_CLIENT_ID && c.GOOGLE_CLIENT_SECRET && c.MESSAGES_ENCRYPTION_KEY),
@@ -161,6 +169,7 @@ export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Prom
         else if (step === "transcribe" && !opts.dryRun) summary.transcribe = await processTranscriptions(ctx);
         else if (step === "embed" && !opts.dryRun) summary.embed = await processEmbeddings(ctx);
         else if (step === "extract" && !opts.dryRun) summary.extract = await processExtraction(ctx);
+        else if (step === "followthrough" && !opts.dryRun) summary.followthrough = await processFollowthrough(ctx);
         else if (step === "scout" && !opts.dryRun) summary.scout = await processScouting(ctx);
         else if (step === "cut" && !opts.dryRun) summary.cut = await processCuts(ctx);
         else if (step === "report") summary.report = await buildReport(ctx.pool, ctx.now());
@@ -251,6 +260,15 @@ export function formatRunSummary(s: RunSummary): string {
         : `extract: off${x.candidatesRecordings || x.candidatesThreads ? ` (${x.candidatesRecordings} recording(s)${x.candidatesThreads ? ` and ${x.candidatesThreads} thread(s)` : ""} waiting)` : ""}`,
     );
   }
+  if (s.followthrough) {
+    const f = s.followthrough;
+    const seen = `${f.candidates.replies} waiting on a reply, ${f.candidates.commitments} open commitment(s), ${f.candidates.quiet} gone quiet`;
+    lines.push(
+      f.configured
+        ? `followthrough: ${seen}; queued ${f.queued.replies} reply(ies), ${f.queued.done} done, ${f.queued.nudges} nudge(s)${f.skippedNoReply ? `, ${f.skippedNoReply} needing no reply` : ""}; ${f.checked} checked, ${f.calls} call(s), ${f.failed} failed, $${f.spentUsd.toFixed(3)} spent${f.stoppedEarly ? `; stopped early: ${f.stoppedEarly}` : ""}`
+        : `followthrough: off (${seen})`,
+    );
+  }
   if (s.scout) {
     const c = s.scout;
     lines.push(
@@ -270,7 +288,7 @@ export function formatRunSummary(s: RunSummary): string {
     );
   }
   // Per-item errors from each step, a few of them: the full lists live in the run's summary JSON.
-  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.meet?.errors ?? []), ...(s.leads?.errors ?? []), ...(s.gmail?.errors ?? []), ...(s.gmail?.ingest.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.embed?.errors ?? []), ...(s.extract?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
+  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.meet?.errors ?? []), ...(s.leads?.errors ?? []), ...(s.gmail?.errors ?? []), ...(s.gmail?.ingest.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.embed?.errors ?? []), ...(s.extract?.errors ?? []), ...(s.followthrough?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
   if (itemErrors.length) {
     const shown = itemErrors.slice(0, 3);
     lines.push(`errors: ${shown.join(" | ")}${itemErrors.length > shown.length ? ` | …and ${itemErrors.length - shown.length} more` : ""}`);

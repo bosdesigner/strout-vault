@@ -33,6 +33,8 @@ export interface MockServices {
   anthropicRequests: Array<{ model: string; effort: string | null; hasFormat: boolean; betas: string | null; cachedSystem: boolean; chars: number; maxTokens: number }>;
   /** Extraction requests (Jarvis step 2): the context block and transcript chunk Claude was sent. */
   extractRequests: Array<{ model: string; effort: string | null; hasFormat: boolean; betas: string | null; cachedSystem: boolean; context: string; transcript: string }>;
+  /** Follow-through requests (Jarvis step 5 C): "done" checks and "draft" requests, with the user message. */
+  followthroughRequests: Array<{ kind: "done" | "draft"; model: string; effort: string | null; user: string }>;
   /** Replace the recording list between runs. */
   setRecordings(recs: MockRecording[]): void;
   /** How the mock Claude answers: "ok" (one real candidate per chunk plus one with impossible timestamps), or "refusal". */
@@ -53,6 +55,37 @@ export function createMockServices(initial: MockRecording[], opts: { pageSize?: 
   let anthropicMode: "ok" | "refusal" = "ok";
   const rateLimited = new Set<string>();
   const extractRequests: MockServices["extractRequests"] = [];
+  const followthroughRequests: MockServices["followthroughRequests"] = [];
+
+  // The follow-through mock: a commitment counts as kept when a later line says "sent" (evidence is
+  // that line); a draft echoes its purpose so tests can tell which candidate it was written for.
+  const followthroughReply = (kind: "done" | "draft", body: { model: string; messages: Array<{ content: unknown }>; output_config?: { effort?: string } }) => {
+    const user = String(body.messages?.[0]?.content ?? "");
+    followthroughRequests.push({ kind, model: body.model, effort: body.output_config?.effort ?? null, user });
+    const usage = { input_tokens: Math.max(1, Math.round(user.length / 4)), output_tokens: 150, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+    let out: unknown;
+    if (kind === "done") {
+      let hit: { id: number; sec: number; line: string } | null = null;
+      let current = 0;
+      for (const line of user.split("\n")) {
+        const conv = /^Conversation (\d+) /.exec(line);
+        if (conv) current = Number(conv[1]);
+        const m = /^\[(\d{2}):(\d{2}):(\d{2})\] (.*)$/.exec(line);
+        if (m && current && /\bsent\b/i.test(m[4]) && !hit) hit = { id: current, sec: Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]), line: m[4] };
+      }
+      out = hit
+        ? { kept: "yes", confidence: 0.9, evidence_interaction_id: hit.id, quote_start_sec: hit.sec, quote: hit.line.slice(0, 80), explanation: "Mock: a later message says it was sent." }
+        : { kept: "unclear", confidence: 0.5, evidence_interaction_id: null, quote_start_sec: null, quote: "", explanation: "Mock: nothing later mentions it." };
+    } else {
+      const purpose = /^Purpose: (.*)$/m.exec(user)?.[1] ?? "";
+      const email = /^To: .* by email/m.test(user);
+      // A reply is only needed when the last message asks something.
+      const convo = user.split("Conversation so far (most recent last):")[1]?.split("\nSamples of Ben's")[0]?.trim().split("\n") ?? [];
+      const needsReply = !purpose.startsWith("Reply to") || /\?/.test(convo[convo.length - 1] ?? "");
+      out = { needs_reply: needsReply, subject: email ? "Mock subject" : null, body: needsReply ? `Mock draft: ${purpose.slice(0, 160)}` : "" };
+    }
+    return json({ id: `msg_mock_ft_${calls.anthropic}`, type: "message", role: "assistant", model: body.model, content: [{ type: "text", text: JSON.stringify(out) }], stop_reason: "end_turn", stop_sequence: null, usage });
+  };
 
   const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
@@ -212,6 +245,8 @@ export function createMockServices(initial: MockRecording[], opts: { pageSize?: 
       };
       const systemText = Array.isArray(body.system) ? body.system.map((b) => b.text).join("\n") : String(body.system ?? "");
       if (systemText.includes("relationship records should remember")) return extractReply(body, headers);
+      if (systemText.includes("decide whether a commitment")) return followthroughReply("done", body);
+      if (systemText.includes("write a draft message for Ben")) return followthroughReply("draft", body);
       const text = String(body.messages?.[0]?.content ?? "");
       anthropicRequests.push({
         model: body.model,
@@ -278,6 +313,7 @@ export function createMockServices(initial: MockRecording[], opts: { pageSize?: 
     groqRequests,
     anthropicRequests,
     extractRequests,
+    followthroughRequests,
     setRecordings(recs) {
       recordings = recs;
     },

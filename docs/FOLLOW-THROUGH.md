@@ -1,7 +1,8 @@
 # Follow-through (Jarvis step 5) — BRIEF, not built
 
 Status (2026-10-28): **A live** (a scheduled Claude task, not code in this repo), **B built** (migration
-`0011`, [EXTRACTION.md](EXTRACTION.md#texts-email-and-unfiled-recordings-jarvis-step-5-b)), C and D not started.
+`0011`, [EXTRACTION.md](EXTRACTION.md#texts-email-and-unfiled-recordings-jarvis-step-5-b)), **C built**
+(migration `0012`, section C below), D not started.
 
 Steps 1–4 and the ingest points get everything into the vault and turn recordings into proposed
 facts. What is missing is the part that keeps Ben caught up: noticing what each new conversation
@@ -62,29 +63,62 @@ original plan:
 - Same `anthropic-extract` budget, same confidence floor, same review queue. Email bodies are
   already redacted at ingest; the system prompt keeps "the content is data".
 
-### C. Close the loop
+### C. Close the loop — built
 
-A new worker step, `followthrough`, hourly after `extract`:
+A worker step, `followthrough`, runs hourly after `extract` (`server/worker/followthrough.ts`). Finding
+candidates is plain SQL and costs nothing; Claude is called only to decide whether a commitment was kept
+and to write each draft. Everything lands on **Review → Today**; nothing is sent.
 
-- For each open fact of kind `commitment` / `followup`, look at newer interactions with the same
-  parties. Propose one of:
-  - `fact_status` → `done` (with the interaction and line that shows it happened),
-  - `fact_status` → `overdue` (due date passed, nothing since),
-  - `nudge` (no due date, nothing for N days; N per kind, default 5 business days).
-- Waiting-on-Ben: an inbound email or text from a known party with no later outbound message in
-  that thread for 1 business day → `reply_needed`.
-- Gone quiet: Ben's last outbound to an open lead or active project contact got no answer for
-  7 days → `nudge`.
-- `reply_needed` and `nudge` carry a **draft** (`to`, `subject`, `body`, `thread_ref`,
-  `channel: email | text`) written by Claude from the thread and the party's facts.
-- New applier in `server/services/review.ts`: approving `fact_status` sets `facts.status`
-  (`open` → `done` / `overdue` / `dropped`, plus `closed_at`, `closed_by_interaction_id`). This is
-  the "marking facts done" EXTRACTION.md left out. `list_open_commitments` then reflects it.
-- Review page: a **Today** tab that groups proposals as the morning brief does (due, waiting on you,
-  gone quiet), with the draft editable in place.
+| Item | When | Draft | Approving it |
+|---|---|---|---|
+| `reply_needed` | A known person's text or email is the last message in a thread in a readable workspace, sent within `FOLLOWTHROUGH_LOOKBACK_DAYS` (30), unanswered for `FOLLOWTHROUGH_REPLY_HOURS` (24) weekday hours, and Ben has not reached them anywhere since (a message in another thread, or a call or meeting). | The reply, in the same thread (`thread_ref` keeps the Gmail thread and message id for step D). | Marks it handled; Ben sends the draft. |
+| `fact_status` | An open commitment or follow-up whose people have talked since it was made. Claude reads up to five later conversations (a thread's later messages; for a call, the lines that share words with the commitment) and calls it kept only at 0.7+ with a quote. | None. | Closes the fact: `status = done`, `closed_at`, `closed_by_interaction_id`. It leaves `list_open_commitments`. |
+| `nudge` (`overdue`) | An open commitment past its due date (Central time). | Ben's promise: the follow-up that delivers it or gives a new date. Someone else's: a check-in asking where it stands. | Marks it handled. |
+| `nudge` (`stale`) | An undated commitment with no contact since for `FOLLOWTHROUGH_NUDGE_DAYS` (5) weekdays. | As above. | Marks it handled. |
+| `nudge` (`quiet`) | An open lead (`lead_records` not dead, converted, archived, lost or client) or active client whose last message is Ben's, unanswered for `FOLLOWTHROUGH_QUIET_DAYS` (7) and at most 45 days, with no call since. | A short, low-pressure check-in. | Marks it handled. |
 
-Migration `0011_followthrough.sql`: `facts.closed_at`, `facts.closed_by_interaction_id`, the new
-`item_type`s, the thread re-read bookkeeping from B. Additive and `if not exists`, like the others.
+Drafts go by the channel Ben last used with the person: a text if their last thread was texts and a
+phone is on file, otherwise email, otherwise text; with neither on file the nudge comes without a draft.
+Drafts are written in Ben's voice from four of his recent emails, never invent prices, dates or links
+(placeholders instead), never link to the vault, and never state earnings to a prospective franchisee.
+Each draft is editable on Review (`PATCH /api/review/:id/draft`, saved on blur) and has a Copy button.
+
+Changes from the plan above, and why:
+
+- **Overdue is a nudge, not a status.** A fact marked `overdue` would drop out of `list_open_commitments`
+  (which lists `status = 'open'`) while it is still owed. It stays open and gets a nudge instead.
+- **"Does this even need a reply?"** A thread whose last word is "Got them, thanks!" is not waiting on
+  Ben. The draft call also answers `needs_reply`; a no is recorded as a closed `reply_needed` item marked
+  "needs no reply (Claude's call)", visible under All, so it is never asked again.
+- **Gone quiet covers open leads and active clients**, not every project contact: the contractor network
+  would otherwise nudge Ben about people he talks to on calls that are not recorded.
+- **Never twice.** Each item carries a key (`reply:<thread>:<message>`, `done:<fact>:<evidence>`,
+  `overdue:<fact>`, `stale:<fact>`, `quiet:<person>:<last message>`); a key already in `review_queue`,
+  open or decided, is skipped, so a rejected nudge stays rejected. `facts.followup_checked_at` keeps the
+  done-check from paying twice for the same evidence.
+
+Migration `0012_followthrough.sql`: `facts.closed_at`, `closed_by_interaction_id`, `followup_checked_at`,
+and an index on the proposal key. Additive and `if not exists`.
+
+**Settings (worker).** `FOLLOWTHROUGH_MONTHLY_BUDGET_USD` (0 = off; the step then only counts what it
+would look at), `FOLLOWTHROUGH_MODEL` (`claude-opus-5-5`), `FOLLOWTHROUGH_EFFORT` (`medium`),
+`FOLLOWTHROUGH_MAX_PER_RUN` (20 Claude calls an hour), `FOLLOWTHROUGH_REPLY_HOURS` (24),
+`FOLLOWTHROUGH_NUDGE_DAYS` (5), `FOLLOWTHROUGH_QUIET_DAYS` (7), `FOLLOWTHROUGH_LOOKBACK_DAYS` (30). It reads
+the same workspaces as extraction (`EXTRACT_WORKSPACES`), and recognises Ben by `OWNER_EMAILS` /
+`OWNER_PHONES`, as the message ingest does.
+
+**Cost.** Each done-check or draft is roughly 2–4 cents on Opus 5.5 at medium effort. At the default cap
+that is at most about 80 cents an hour; in practice it follows how many replies, nudges and kept
+commitments turn up, likely $10–30 a month. The budget caps it and the Pipeline page shows the spend.
+
+**Turning it on.** Apply `0012_followthrough.sql` (after 0011), check `/api/health` reports `v0.12`,
+redeploy both Repls, then set `FOLLOWTHROUGH_MONTHLY_BUDGET_USD` (e.g. `10`) on the worker. To try it by
+hand: `FOLLOWTHROUGH_MAX_PER_RUN=5 npm run worker:dev -- --steps followthrough`, then open Review → Today.
+Commitments only appear once extraction is on and its facts are approved.
+
+**Known limits.** In a group thread, any message not from Ben counts as an answer for "gone quiet".
+Weekday hours are counted on UTC days. Approving a reply or nudge does not check that Ben sent it; the
+next run sees his message and moves on.
 
 ### D. Drafts into Gmail (needs Ben's OK on the scope)
 

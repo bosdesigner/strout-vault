@@ -4,19 +4,20 @@
 import type pg from "pg";
 import { monthToDateSpend } from "./budget.ts";
 import { EXTRACT_PROVIDER } from "./extract.ts";
+import { FOLLOWTHROUGH_PROVIDER } from "./followthrough.ts";
 
 export interface PipelineReport {
   queue: { queued: number; transcribing: number; failed: number; ready: number };
   downloads: { pending: number; failed: number };
   missingOffsite: { total: number; items: Array<{ id: number; title: string | null; occurredAt: string | null; source: string | null }> };
-  spend: { month: string; groqUsd: number; anthropicUsd?: number; extractUsd?: number };
+  spend: { month: string; groqUsd: number; anthropicUsd?: number; extractUsd?: number; followthroughUsd?: number };
   /** Jarvis step 2. Absent when migration 0007 has not been applied yet. */
   extraction?: { unread: number; read: number; failed: number; openProposals: number; threads?: number };
   clips?: { toReview: number; approved: number; cut: number; renderFailed: number; unscouted: number };
 }
 
 export async function buildReport(pool: pg.Pool, now: Date): Promise<PipelineReport> {
-  const [queue, downloads, missing, missingCount, groq, anthropic, extractUsd, extraction, clips, unscouted] = await Promise.all([
+  const [queue, downloads, missing, missingCount, groq, anthropic, extractUsd, followthroughUsd, extraction, clips, unscouted] = await Promise.all([
     pool.query(
       `select coalesce(pipeline_status, 'ready') as s, count(*)::int as n from interactions group by 1`,
     ),
@@ -37,6 +38,7 @@ export async function buildReport(pool: pg.Pool, now: Date): Promise<PipelineRep
     monthToDateSpend(pool, "groq", now),
     monthToDateSpend(pool, "anthropic", now),
     monthToDateSpend(pool, EXTRACT_PROVIDER, now),
+    monthToDateSpend(pool, FOLLOWTHROUGH_PROVIDER, now),
     extractionCounts(pool),
     pool.query(
       `select status, count(*)::int as n, count(*) filter (where status = 'approved' and render_attempts >= 3)::int as exhausted from clip_candidates group by status`,
@@ -75,7 +77,7 @@ export async function buildReport(pool: pg.Pool, now: Date): Promise<PipelineRep
         source: r.source,
       })),
     },
-    spend: { month: `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`, groqUsd: groq, anthropicUsd: anthropic, extractUsd },
+    spend: { month: `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`, groqUsd: groq, anthropicUsd: anthropic, extractUsd, followthroughUsd },
     ...(extraction ? { extraction } : {}),
     clips: clipCounts,
   };
