@@ -40,7 +40,7 @@ interface Overview {
     downloads: { pending: number; failed: number };
     missingOffsite: { total: number; items: Array<{ id: number; title: string | null; occurredAt: string | null; source: string | null }> };
     spend: { month: string; groqUsd: number; extractUsd?: number };
-    extraction?: { unread: number; read: number; failed: number; openProposals: number };
+    extraction?: { unread: number; read: number; failed: number; openProposals: number; threads?: number };
   };
   lastRuns: Run[];
   failed: Item[];
@@ -190,6 +190,7 @@ export default function PipelinePage() {
             <p className="text-lg font-medium" data-testid="extraction-counts">
               {d.report.extraction.read} read · {d.report.extraction.unread} waiting
             </p>
+            {!!d.report.extraction.threads && <p className="text-xs text-muted-foreground">{d.report.extraction.threads} text and email thread(s) read</p>}
             <p className="text-xs text-muted-foreground">
               {d.report.extraction.failed} failed · <Link to="/review" className="underline">{d.report.extraction.openProposals} proposal(s) to review</Link>
             </p>

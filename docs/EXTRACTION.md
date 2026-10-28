@@ -23,9 +23,10 @@ Approved commitments and follow-ups show up in the MCP `list_open_commitments` t
 
 ## Guardrails
 
-- **Only filed recordings.** A recording without a workspace is never read. `EXTRACT_WORKSPACES`
-  defaults to `*`, which is every workspace except **phalanx**. Phalanx is read only when listed
-  (`*,phalanx`), the same rule as token scopes.
+- **Only filed recordings, or ones the classifier files confidently.** A recording without a workspace
+  is read only when the workspace classifier puts it in one at 0.85 or more (step 5 B, below).
+  `EXTRACT_WORKSPACES` defaults to `*`, which is every workspace except **phalanx**, **personal** and
+  **inbox**. Phalanx is read only when listed (`*,phalanx`), the same rule as token scopes.
 - **Only known ids.** Claude gets the recording's participants, people with a role in its workspace
   (150 at most) and the workspace's projects (100 at most). Any id it returns that was not on those
   lists is dropped, and so is a speaker match to a label that is not in the recording, a label that is
@@ -77,9 +78,54 @@ against the budget.
 | `EXTRACT_MONTHLY_BUDGET_USD` | `0` (off) | monthly ceiling, enforced from `spend_ledger` |
 | `EXTRACT_MODEL` | `claude-opus-5-5` | |
 | `EXTRACT_EFFORT` | `medium` | `low` … `max` |
-| `EXTRACT_WORKSPACES` | `*` | comma list; `*` excludes phalanx unless it is listed |
-| `EXTRACT_MAX_PER_RUN` | `20` | recordings per hourly run |
+| `EXTRACT_WORKSPACES` | `*` | comma list; `*` excludes phalanx (unless listed), personal and inbox |
+| `EXTRACT_MAX_PER_RUN` | `20` | recordings per hourly run (filed and unfiled together) |
+| `EXTRACT_THREAD_DAYS` | `30` | texts and email with a message in the last N days are read; `0` = threads off |
+| `EXTRACT_THREADS_PER_RUN` | `50` | threads per hourly run |
+| `EXTRACT_UNFILED` | `1` | `0` = unfiled recordings are never read |
 | `EXTRACT_MIN_CONFIDENCE` | `0.6` | proposals below this are not queued |
+
+## Texts, email and unfiled recordings (Jarvis step 5 B)
+
+Step 5 ([FOLLOW-THROUGH.md](FOLLOW-THROUGH.md)) needs the vault to notice what Ben promised in texts and
+email, and in the sales calls that land unfiled. The same step, prompt, guardrails, budget and Review
+queue now cover both.
+
+**Texts and email.** A `text_thread` or `email_thread` in a readable workspace is read when its last
+message is within `EXTRACT_THREAD_DAYS` (30). Each message is one line (sender, then text, stamped with
+the time since the thread's first message), sent in pieces of about 20,000 characters.
+`interactions.extracted_through_idx` remembers the last message read. When a thread gains messages, it
+is read again and **only the new messages are sent**; the last six messages already read and what is
+already recorded from the thread (facts and open or approved proposals) go along as context, marked as
+context, so the new messages make sense and nothing is proposed twice. The duplicate check against
+`review_queue` and `facts` still applies on top. Threads come first in each run, since they are what
+is waiting on a reply.
+
+Cost: a thread's own text is short, but every request carries the context block (up to 150 people
+and 100 projects) and the model's thinking, so a read is roughly **2–5 cents** on Opus 5.5 at medium
+effort, whether the thread has two messages or twenty. The first runs work through the last 30 days of
+threads; after that the cost follows how many threads get new messages each day. The monthly budget
+caps all of it, and the spend shows on the Pipeline page. `EXTRACT_THREAD_DAYS` shortens the first
+pass, and `EXTRACT_THREADS_PER_RUN` slows it.
+
+**Unfiled recordings.** Zoom calls often land without a workspace (the assessment calls are titled
+"NAME: AnotherStory Assessment" and have no known participants yet). Each run, the worker classifies
+up to 200 unread unfiled recordings with the same classifier as `npm run propose:workspaces`
+(`server/workspaces/classify.ts`). One it files at **0.85 or more** (a title rule, or a known person's
+full name in the title) into a workspace this run may read is read **under that workspace**, and the
+filing is queued on Review as an `interaction_workspace` item (unless one is already open). Reading
+never files anything: approving that item does. A recording whose filing Ben rejected is not read, and
+phalanx is never guessed into unless `EXTRACT_WORKSPACES` lists it. Facts approved from it carry the
+classifier's workspace.
+
+**Turning it on.** Apply `db/migrations/0011_extract_threads.sql` (after 0010) the same way as 0007,
+check `/api/health` reports `v0.11`, and redeploy the worker. Nothing else is needed: threads and
+unfiled recordings are read whenever `EXTRACT_MONTHLY_BUDGET_USD` is above 0. To start with recordings
+only, set `EXTRACT_THREAD_DAYS=0` and `EXTRACT_UNFILED=0`. To try threads by hand:
+
+```bash
+EXTRACT_MAX_PER_RUN=1 EXTRACT_THREADS_PER_RUN=5 npm run worker:dev -- --steps extract
+```
 
 ## Code map
 
@@ -87,13 +133,14 @@ against the budget.
 server/worker/extract.ts      prompt, schema, context block, guardrails (toProposals, dedupeProposals), the step
 server/services/review.ts     APPLIERS: what approving each proposal type writes
 server/worker/report.ts       extraction counts and spend for the Pipeline page
-db/migrations/0007_extract.sql
-tests/api/extract.test.ts     the step against a mock Claude, and every applier
-tests/unit/extract.test.ts    guardrails and dedupe
+server/workspaces/classify.ts the workspace classifier unfiled recordings are read under
+db/migrations/0007_extract.sql, 0011_extract_threads.sql
+tests/api/extract.test.ts     the step against a mock Claude (recordings, threads, unfiled), and every applier
+tests/unit/extract.test.ts    guardrails, dedupe, the thread context block and chunker
 ```
 
 ## Not in this step
 
 Creating new people from a transcript (only known parties are referenced; agents can still propose
-`new_party`), marking facts done, and the action tools (Gmail drafts, calendar, AnotherStoryBLDR
-writes) come later.
+`new_party`). Marking facts done or overdue, and drafted replies, are step 5 C; Gmail drafts are step 5 D
+([FOLLOW-THROUGH.md](FOLLOW-THROUGH.md)). Calendar and AnotherStoryBLDR writes come later.

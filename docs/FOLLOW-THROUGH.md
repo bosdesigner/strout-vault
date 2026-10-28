@@ -1,7 +1,7 @@
 # Follow-through (Jarvis step 5) — BRIEF, not built
 
-Status: **brief written** (2026-10-28). Nothing in this doc exists yet except step A, which is a
-scheduled Claude task, not code in this repo.
+Status (2026-10-28): **A live** (a scheduled Claude task, not code in this repo), **B built** (migration
+`0011`, [EXTRACTION.md](EXTRACTION.md#texts-email-and-unfiled-recordings-jarvis-step-5-b)), C and D not started.
 
 Steps 1–4 and the ingest points get everything into the vault and turn recordings into proposed
 facts. What is missing is the part that keeps Ben caught up: noticing what each new conversation
@@ -46,7 +46,13 @@ It never sends, never writes the vault, and skips phalanx and `personal`. Step A
 test: what Ben keeps, edits or deletes tells us how much of B–D to trust to the worker. To change
 it, edit the task's prompt (claude.ai → scheduled tasks) or ask a session to `update_trigger` it.
 
-### B. Read texts, email and unfiled recordings
+### B. Read texts, email and unfiled recordings — built
+
+As built: threads with a message in the last `EXTRACT_THREAD_DAYS` (30) are read and re-read from
+`extracted_through_idx`, sending only the new messages; unfiled recordings the classifier files at 0.85+
+are read under that workspace with the filing queued as an `interaction_workspace` review item.
+[EXTRACTION.md](EXTRACTION.md#texts-email-and-unfiled-recordings-jarvis-step-5-b) has the details. The
+original plan:
 
 - Extend the extract step to `text_thread` / `email_thread`. A thread is re-read when it gains
   messages (track `extracted_message_count` or the last message time, not only `extracted_at`) and

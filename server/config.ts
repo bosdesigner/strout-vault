@@ -82,10 +82,18 @@ const envSchema = z.object({
   EXTRACT_MODEL: z.string().default("claude-opus-5-5"),
   EXTRACT_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("medium"),
   EXTRACT_MONTHLY_BUDGET_USD: z.coerce.number().min(0).default(0),
-  // Workspaces whose recordings are read. "*" is every workspace except phalanx (investor
-  // material), which is only read when listed: "*,phalanx". Unfiled recordings are never read.
+  // Workspaces whose recordings and threads are read. "*" is every workspace except phalanx
+  // (investor material), personal and inbox; phalanx is only read when listed: "*,phalanx".
   EXTRACT_WORKSPACES: z.string().default("*"),
   EXTRACT_MAX_PER_RUN: z.coerce.number().int().positive().default(20),
+  // Texts and email (Jarvis step 5 B, docs/FOLLOW-THROUGH.md): threads with a message in the last
+  // N days are read, and read again when they gain messages (only the new ones are sent). 0 = off.
+  EXTRACT_THREAD_DAYS: z.coerce.number().int().min(0).default(30),
+  EXTRACT_THREADS_PER_RUN: z.coerce.number().int().positive().default(50),
+  // Unfiled recordings the workspace classifier files at 0.85+ (a title rule such as "AnotherStory
+  // Assessment", or a known person in the title) are read under that workspace, and the filing is
+  // queued for review. Never phalanx unless EXTRACT_WORKSPACES lists it. "0" = unfiled never read.
+  EXTRACT_UNFILED: z.enum(["0", "1"]).default("1"),
   // Proposals below this confidence are dropped rather than queued.
   EXTRACT_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.6),
   // ---- Leads (Jarvis step 3, docs/LEADS.md) ----

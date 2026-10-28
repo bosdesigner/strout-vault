@@ -11,7 +11,7 @@ export interface PipelineReport {
   missingOffsite: { total: number; items: Array<{ id: number; title: string | null; occurredAt: string | null; source: string | null }> };
   spend: { month: string; groqUsd: number; anthropicUsd?: number; extractUsd?: number };
   /** Jarvis step 2. Absent when migration 0007 has not been applied yet. */
-  extraction?: { unread: number; read: number; failed: number; openProposals: number };
+  extraction?: { unread: number; read: number; failed: number; openProposals: number; threads?: number };
   clips?: { toReview: number; approved: number; cut: number; renderFailed: number; unscouted: number };
 }
 
@@ -81,7 +81,7 @@ export async function buildReport(pool: pg.Pool, now: Date): Promise<PipelineRep
   };
 }
 
-/** Filed recordings read or waiting for extraction, and the review items it queued that are still open. */
+/** Filed recordings read or waiting for extraction, threads read, and the review items it queued that are still open. */
 async function extractionCounts(pool: pg.Pool): Promise<PipelineReport["extraction"] | null> {
   try {
     const { rows } = await pool.query(
@@ -91,7 +91,12 @@ async function extractionCounts(pool: pg.Pool): Promise<PipelineReport["extracti
               (select count(*)::int from review_queue where status = 'open' and proposal->>'source' = 'extract') as open_proposals
          from interactions i where i.workspace_id is not null and exists (select 1 from transcripts t where t.interaction_id = i.id)`,
     );
-    return { unread: rows[0].unread, read: rows[0].read, failed: rows[0].failed, openProposals: rows[0].open_proposals };
+    // Texts and email read (step 5 B); 0011 adds the column, so an older database reports none.
+    const threads = await pool
+      .query(`select count(*)::int as n from interactions where kind in ('text_thread', 'email_thread') and extracted_through_idx is not null`)
+      .then((r) => r.rows[0].n as number)
+      .catch((err) => ((err as { code?: string }).code === "42703" ? 0 : Promise.reject(err)));
+    return { unread: rows[0].unread, read: rows[0].read, failed: rows[0].failed, openProposals: rows[0].open_proposals, threads };
   } catch (err) {
     if ((err as { code?: string }).code === "42703") return null; // undefined column: 0007 not applied yet
     throw err;

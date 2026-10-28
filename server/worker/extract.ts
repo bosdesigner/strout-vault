@@ -5,10 +5,15 @@
 // review_queue with the moment it came from; nothing is applied until Ben approves it on
 // the Review page (services/review.ts applies the same shapes the MCP propose_update tool uses).
 //
+// Step 5 B (docs/FOLLOW-THROUGH.md) widens what is read: text and email threads with recent
+// messages, read again when they gain messages (only the new ones are sent, the earlier ones go
+// along as context), and unfiled recordings the workspace classifier files at 0.85+, read under
+// that workspace with the filing itself queued for review.
+//
 // Transcript text leaves the vault for this and it costs money, so nothing is sent unless
 // ANTHROPIC_API_KEY is set and the month's spend stays under EXTRACT_MONTHLY_BUDGET_USD
-// (ledger provider "anthropic-extract", separate from the scout's). Unfiled recordings are
-// never read, and phalanx only when EXTRACT_WORKSPACES lists it.
+// (ledger provider "anthropic-extract", separate from the scout's). phalanx is read only when
+// EXTRACT_WORKSPACES lists it; personal and inbox never.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
@@ -20,8 +25,19 @@ import { checkBudget, recordSpend } from "./budget.ts";
 import { chunkSegments, chunkText, CHUNK_SECONDS, estimateScoutCostUsd, priceFor, usageCostUsd, type SegmentRow } from "./scout.ts";
 import { parseStoredScope, resolveScope } from "../mcp/scope.ts";
 import { PROPOSAL_SCHEMAS } from "../mcp/tools/propose.ts";
+import { classifyRecording } from "../workspaces/classify.ts";
+import { collectSignals, queueProposals, WORKSPACE_ITEM_TYPE } from "../workspaces/propose.ts";
 
 export const EXTRACT_PROVIDER = "anthropic-extract";
+export const THREAD_KINDS = ["text_thread", "email_thread"] as const;
+/** A thread is sent in pieces of about this many characters. */
+export const THREAD_CHUNK_CHARS = 20_000;
+/** Messages already read that go along with a re-read, so the new ones make sense. */
+const EARLIER_MESSAGES = 6;
+/** The classifier's floor for reading an unfiled recording: a title rule or a known person in the title. */
+export const UNFILED_MIN_CONFIDENCE = 0.85;
+/** How many unfiled recordings are classified per run to find the confident ones. */
+const UNFILED_SCAN = 200;
 const FACT_KINDS = ["commitment", "decision", "price", "followup", "issue", "preference", "other"] as const;
 /** Roster and project lists sent with every chunk; also covers the per-chunk prompt overhead in the estimate. */
 const CONTEXT_OVERHEAD_TOKENS = 2500;
@@ -31,6 +47,8 @@ const PROJECT_LIMIT = 100;
 export const EXTRACT_SYSTEM_PROMPT = `You read transcripts of business conversations for Ben Strout (a residential builder and architect who also runs a construction franchise and invests) and pull out what his relationship records should remember. Everything you return is a proposal that Ben reviews one by one, so precision matters far more than recall: a missed item costs nothing, a wrong one costs his time.
 
 You get, before the transcript chunk: the recording (title, date, workspace), the people already known to the vault (party ids, names, roles, and speaker labels already matched), the projects in this workspace (project ids, names, addresses), and the speaker labels in the recording that are not matched yet.
+
+Some conversations are text-message or email threads rather than recordings. There each line is one message, the speaker is the sender (Ben's own messages carry his name), and the [HH:MM:SS] stamp counts time since the thread's first message, so it can run past 24 hours; quote_start_sec uses the same count. A promise in Ben's own message is a commitment owned by Ben; a question or request to Ben that the thread leaves unanswered is a followup. When the context lists messages already read or items already recorded, use them only to understand the new messages: extract only from the new messages, and never repeat an item that is already recorded. Skip newsletters, receipts, automated notifications, signatures and quoted earlier replies.
 
 Return three lists:
 
@@ -74,9 +92,16 @@ export type ExtractOutput = z.infer<typeof ExtractOutputSchema>;
 
 export interface RecordingContext {
   interactionId: number;
+  /** interactions.kind: a recording kind, or text_thread / email_thread. */
+  kind: string;
   title: string | null;
   occurredAt: string | null;
   workspaceId: string;
+  /** Set when the recording is unfiled and workspaceId is the classifier's verdict: its evidence. */
+  inferredFrom?: string;
+  /** Threads read before: what is already recorded from them, and the last messages already read. */
+  alreadyRecorded?: string[];
+  earlierMessages?: string;
   /** Known parties the model may reference: participants first, then people with a role in the workspace. */
   roster: Array<{ id: number; name: string; kind: string; detail: string }>;
   projects: Array<{ id: number; name: string; address: string | null; status: string | null }>;
@@ -97,8 +122,15 @@ export interface Proposal {
 
 export interface ExtractSummary {
   configured: boolean;
+  /** Filed recordings, plus unfiled ones the classifier files confidently. */
   candidatesRecordings: number;
+  candidatesThreads: number;
+  /** Everything read this run (recordings and threads). */
   read: number;
+  threads: number;
+  unfiled: number;
+  /** Filings queued for review for the unfiled recordings read. */
+  filingProposals: number;
   queued: { facts: number; speakers: number; projects: number };
   waitingOnBudget: number;
   failed: number;
@@ -136,12 +168,19 @@ function stamp(sec: number): string {
   return `${String(Math.floor(s / 3600)).padStart(2, "0")}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
+export function isThread(kind: string): boolean {
+  return (THREAD_KINDS as readonly string[]).includes(kind);
+}
+
 /** The per-recording block sent ahead of each transcript chunk. */
 export function contextText(rc: RecordingContext): string {
+  const noun = rc.kind === "email_thread" ? "Email thread" : rc.kind === "text_thread" ? "Text conversation" : "Recording";
   const lines = [
-    `Recording #${rc.interactionId}: ${rc.title?.trim() || "(untitled)"}`,
-    `Date: ${rc.occurredAt ? rc.occurredAt.slice(0, 10) : "unknown"}`,
-    `Workspace: ${rc.workspaceId}`,
+    `${noun} #${rc.interactionId}: ${rc.title?.trim() || "(untitled)"}`,
+    isThread(rc.kind) && rc.occurredAt
+      ? `First message: ${rc.occurredAt.slice(0, 16).replace("T", " ")} UTC ([HH:MM:SS] stamps count from here)`
+      : `Date: ${rc.occurredAt ? rc.occurredAt.slice(0, 10) : "unknown"}`,
+    `Workspace: ${rc.workspaceId}${rc.inferredFrom ? ` (not filed yet; inferred from ${rc.inferredFrom})` : ""}`,
     "",
     "Known people and companies (party id · name · how they relate):",
     ...(rc.roster.length ? rc.roster.map((p) => `- ${p.id} · ${p.name} · ${p.detail}`) : ["- (none)"]),
@@ -157,7 +196,28 @@ export function contextText(rc: RecordingContext): string {
         })
       : ["- (no labels)"]),
   ];
+  if (rc.alreadyRecorded?.length) lines.push("", "Already recorded from this conversation (do not repeat):", ...rc.alreadyRecorded.map((t) => `- ${t}`));
+  if (rc.earlierMessages) lines.push("", "Earlier messages, already read (context only; extract nothing from these):", rc.earlierMessages);
   return lines.join("\n");
+}
+
+/** Splits a thread's messages into pieces of about maxChars, never splitting a message. */
+export function chunkMessages<T extends SegmentRow>(segments: T[], maxChars = THREAD_CHUNK_CHARS): T[][] {
+  const out: T[][] = [];
+  let cur: T[] = [];
+  let size = 0;
+  for (const seg of segments) {
+    const len = (seg.text?.length ?? 0) + (seg.speaker?.length ?? 0) + 16;
+    if (cur.length && size + len > maxChars) {
+      out.push(cur);
+      cur = [];
+      size = 0;
+    }
+    cur.push(seg);
+    size += len;
+  }
+  if (cur.length) out.push(cur);
+  return out;
 }
 
 /**
@@ -257,12 +317,14 @@ export function dedupeProposals(all: Proposal[]): Proposal[] {
   return out;
 }
 
-export async function loadRecordingContext(pool: pg.Pool, interactionId: number): Promise<RecordingContext> {
+export async function loadRecordingContext(pool: pg.Pool, interactionId: number, opts: { workspaceId?: string; inferredFrom?: string } = {}): Promise<RecordingContext> {
   const {
     rows: [rec],
-  } = await pool.query(`select id, title, occurred_at, workspace_id from interactions where id = $1`, [interactionId]);
-  if (!rec?.workspace_id) throw new ExtractError(`recording ${interactionId} has no workspace`);
-  const ws = rec.workspace_id as string;
+  } = await pool.query(`select id, kind, title, occurred_at, workspace_id from interactions where id = $1`, [interactionId]);
+  // An unfiled recording is read only under the workspace the classifier gave it.
+  if (!rec) throw new ExtractError(`recording ${interactionId} not found`);
+  const ws = (rec.workspace_id as string | null) ?? opts.workspaceId;
+  if (!ws) throw new ExtractError(`recording ${interactionId} has no workspace`);
   const [participants, people, projects, labels, links] = await Promise.all([
     pool.query(`select pa.id, pa.name, pa.kind, ip.speaker_label from interaction_participants ip join parties pa on pa.id = ip.party_id where ip.interaction_id = $1 order by pa.name`, [
       interactionId,
@@ -303,9 +365,11 @@ export async function loadRecordingContext(pool: pg.Pool, interactionId: number)
   }
   return {
     interactionId,
+    kind: rec.kind,
     title: rec.title ?? null,
     occurredAt: rec.occurred_at ? new Date(rec.occurred_at).toISOString() : null,
     workspaceId: ws,
+    ...(rec.workspace_id ? {} : { inferredFrom: opts.inferredFrom ?? "the workspace classifier" }),
     roster,
     projects: projects.rows.map((p) => ({ id: Number(p.id), name: p.name, address: p.address ?? null, status: p.status ?? null })),
     labels: labels.rows.map((l) => ({ label: l.label, lines: l.lines, partyId: l.party_id ? Number(l.party_id) : null })),
@@ -323,19 +387,126 @@ function makeClient(ctx: WorkerContext): Anthropic {
     timeout: 10 * 60 * 1000,
   });
 }
-
-interface CandidateRow {
+/** One thing to read this run: a filed recording, an unfiled one with its classifier verdict, or a thread. */
+interface Job {
   id: number;
   title: string | null;
-  word_count: number | null;
-  span_sec: number | null;
+  kind: "recording" | "unfiled" | "thread";
+  /** For the budget estimate: words to send, and how many requests that takes. */
+  words: number;
+  calls: number;
+  /** Most recent activity, for ordering. */
+  at: number;
+  workspaceId?: string;
+  inferredFrom?: string;
+  filing?: { confidence: number; evidence: string[]; alsoConsidered: string[]; open: boolean };
+}
+
+/** Filed recordings not read yet. */
+async function recordingJobs(ctx: WorkerContext, workspaces: string[]): Promise<Job[]> {
+  const { rows } = await ctx.pool.query(
+    `select i.id, i.title, i.occurred_at, t.word_count,
+            (select max(s.end_sec) - min(s.start_sec) from segments s where s.interaction_id = i.id) as span_sec
+       from interactions i join transcripts t on t.interaction_id = i.id
+      where i.extracted_at is null and i.workspace_id = any($1::text[])
+        and i.kind not in ('text_thread', 'email_thread')
+        and exists (select 1 from segments s where s.interaction_id = i.id)
+      order by i.occurred_at desc nulls last, i.id desc
+      limit $2`,
+    [workspaces, ctx.config.EXTRACT_MAX_PER_RUN],
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    title: r.title,
+    kind: "recording",
+    words: Number(r.word_count ?? 0),
+    calls: Math.max(1, Math.floor(Number(r.span_sec ?? 0) / CHUNK_SECONDS) + 1),
+    at: r.occurred_at ? new Date(r.occurred_at).getTime() : 0,
+  }));
+}
+
+/**
+ * Unfiled recordings the workspace classifier files at UNFILED_MIN_CONFIDENCE or more, into a
+ * workspace this run may read. A recording whose filing Ben already rejected is left alone.
+ */
+async function unfiledJobs(ctx: WorkerContext, workspaces: string[], limit: number): Promise<Job[]> {
+  if (ctx.config.EXTRACT_UNFILED !== "1" || limit <= 0) return [];
+  const { signals, openProposals } = await collectSignals(ctx.pool, { limit: UNFILED_SCAN, unextracted: true });
+  if (!signals.length) return [];
+  const ids = signals.map((s) => s.interactionId);
+  const [rejected, meta] = await Promise.all([
+    ctx.pool.query(`select distinct interaction_id from review_queue where item_type = $1 and status = 'rejected' and interaction_id = any($2::bigint[])`, [WORKSPACE_ITEM_TYPE, ids]),
+    ctx.pool.query(
+      `select i.id, i.occurred_at, coalesce(t.word_count, (select sum(array_length(regexp_split_to_array(s.text, '\\s+'), 1)) from segments s where s.interaction_id = i.id))::int as words,
+              (select max(s.end_sec) - min(s.start_sec) from segments s where s.interaction_id = i.id) as span_sec
+         from interactions i left join transcripts t on t.interaction_id = i.id where i.id = any($1::bigint[])`,
+      [ids],
+    ),
+  ]);
+  const refused = new Set(rejected.rows.map((r) => Number(r.interaction_id)));
+  const byId = new Map(meta.rows.map((r) => [Number(r.id), r]));
+  const jobs: Job[] = [];
+  for (const s of signals) {
+    if (jobs.length >= limit) break;
+    if (refused.has(s.interactionId)) continue;
+    const p = classifyRecording(s);
+    if (!p || p.confidence < UNFILED_MIN_CONFIDENCE || !workspaces.includes(p.workspaceId)) continue;
+    const m = byId.get(s.interactionId);
+    jobs.push({
+      id: s.interactionId,
+      title: s.title,
+      kind: "unfiled",
+      words: Number(m?.words ?? 0),
+      calls: Math.max(1, Math.floor(Number(m?.span_sec ?? 0) / CHUNK_SECONDS) + 1),
+      at: m?.occurred_at ? new Date(m.occurred_at).getTime() : 0,
+      workspaceId: p.workspaceId,
+      inferredFrom: p.evidence.join("; "),
+      filing: { confidence: p.confidence, evidence: p.evidence, alsoConsidered: p.alsoConsidered, open: openProposals.has(s.interactionId) },
+    });
+  }
+  return jobs;
+}
+
+/** Text and email threads with a message in the last EXTRACT_THREAD_DAYS that has not been read. */
+async function threadJobs(ctx: WorkerContext, workspaces: string[]): Promise<Job[]> {
+  if (ctx.config.EXTRACT_THREAD_DAYS <= 0) return [];
+  const since = new Date(ctx.now().getTime() - ctx.config.EXTRACT_THREAD_DAYS * 86_400_000);
+  // occurred_at is the first message; the last one is occurred_at + its offset. Ingest bumps
+  // updated_at on every change, so it bounds the scan cheaply.
+  const { rows } = await ctx.pool.query(
+    `select i.id, i.title, s.new_chars, s.last_at
+       from interactions i
+       join lateral (
+         select max(idx) as max_idx,
+                i.occurred_at + make_interval(secs => coalesce(max(start_sec), 0)) as last_at,
+                coalesce(sum(length(text)) filter (where idx > coalesce(i.extracted_through_idx, -1)), 0)::int as new_chars
+           from segments where interaction_id = i.id) s on true
+      where i.kind = any($1::text[]) and i.workspace_id = any($2::text[]) and i.updated_at >= $3
+        and s.max_idx is not null and s.max_idx > coalesce(i.extracted_through_idx, -1)
+        and s.last_at >= $3
+      order by s.last_at desc, i.id desc
+      limit $4`,
+    [THREAD_KINDS, workspaces, since, ctx.config.EXTRACT_THREADS_PER_RUN],
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    title: r.title,
+    kind: "thread",
+    words: Math.ceil(Number(r.new_chars ?? 0) / 5),
+    calls: Math.max(1, Math.ceil(Number(r.new_chars ?? 0) / THREAD_CHUNK_CHARS)),
+    at: r.last_at ? new Date(r.last_at).getTime() : 0,
+  }));
 }
 
 export async function processExtraction(ctx: WorkerContext): Promise<ExtractSummary> {
   const summary: ExtractSummary = {
     configured: extractConfigured(ctx),
     candidatesRecordings: 0,
+    candidatesThreads: 0,
     read: 0,
+    threads: 0,
+    unfiled: 0,
+    filingProposals: 0,
     queued: { facts: 0, speakers: 0, projects: 0 },
     waitingOnBudget: 0,
     failed: 0,
@@ -347,58 +518,61 @@ export async function processExtraction(ctx: WorkerContext): Promise<ExtractSumm
     return summary;
   }
   const workspaces = await extractWorkspaces(ctx.pool, ctx.config.EXTRACT_WORKSPACES);
-  const { rows } = await ctx.pool.query<CandidateRow>(
-    `select i.id, i.title, t.word_count,
-            (select max(s.end_sec) - min(s.start_sec) from segments s where s.interaction_id = i.id) as span_sec
-       from interactions i join transcripts t on t.interaction_id = i.id
-      where i.extracted_at is null and i.workspace_id = any($1::text[])
-        -- Texts and email wait for their own extraction pass (docs/MESSAGES.md).
-        and i.kind not in ('text_thread', 'email_thread')
-        and exists (select 1 from segments s where s.interaction_id = i.id)
-      order by i.occurred_at desc nulls last, i.id desc
-      limit $2`,
-    [workspaces, ctx.config.EXTRACT_MAX_PER_RUN],
-  );
-  summary.candidatesRecordings = rows.length;
-  if (!rows.length) return summary;
+  const recordings = await recordingJobs(ctx, workspaces);
+  const unfiled = await unfiledJobs(ctx, workspaces, ctx.config.EXTRACT_MAX_PER_RUN - recordings.length);
+  const threads = await threadJobs(ctx, workspaces);
+  summary.candidatesRecordings = recordings.length + unfiled.length;
+  summary.candidatesThreads = threads.length;
+  // Threads first (they are what is waiting on a reply), then recordings newest first.
+  const jobs = [...threads, ...[...recordings, ...unfiled].sort((a, b) => b.at - a.at || b.id - a.id)];
+  if (!jobs.length) return summary;
   if (!summary.configured) {
-    ctx.log(`extract: ${rows.length} recording(s) waiting; extraction is off until EXTRACT_MONTHLY_BUDGET_USD is set`);
+    ctx.log(`extract: ${recordings.length + unfiled.length} recording(s) and ${threads.length} thread(s) waiting; extraction is off until EXTRACT_MONTHLY_BUDGET_USD is set`);
     return summary;
   }
   const model = ctx.config.EXTRACT_MODEL;
-  ctx.log(`extract: ${rows.length} recording(s) to read (model ${model}, effort ${ctx.config.EXTRACT_EFFORT}, workspaces ${workspaces.join(", ")})`);
+  ctx.log(
+    `extract: ${recordings.length} recording(s), ${unfiled.length} unfiled, ${threads.length} thread(s) to read (model ${model}, effort ${ctx.config.EXTRACT_EFFORT}, workspaces ${workspaces.join(", ")})`,
+  );
   const client = makeClient(ctx);
-  for (const rec of rows) {
+  for (const job of jobs) {
     if (outOfTime(ctx)) {
       summary.stoppedEarly = "time budget";
       break;
     }
-    const label = rec.title?.trim() || `#${rec.id}`;
-    const calls = Math.max(1, Math.floor((rec.span_sec ?? 0) / CHUNK_SECONDS) + 1);
-    const estimate = estimateScoutCostUsd(rec.word_count ?? 0, calls, model) + (calls * CONTEXT_OVERHEAD_TOKENS * priceFor(model).in) / 1_000_000;
+    const label = job.title?.trim() || `#${job.id}`;
+    const estimate = estimateScoutCostUsd(job.words, job.calls, model) + (job.calls * CONTEXT_OVERHEAD_TOKENS * priceFor(model).in) / 1_000_000;
     const check = await checkBudget(ctx.pool, EXTRACT_PROVIDER, ctx.config.EXTRACT_MONTHLY_BUDGET_USD, estimate, ctx.now());
     if (!check.allowed) {
       summary.waitingOnBudget++;
       summary.stoppedEarly = "extract budget";
-      await ctx.pool.query(`update interactions set extract_error = $2 where id = $1`, [rec.id, `waiting: ${check.reason}`]);
+      await ctx.pool.query(`update interactions set extract_error = $2 where id = $1`, [job.id, `waiting: ${check.reason}`]);
       ctx.log(`extract:   ${label}: ${check.reason}`);
       break;
     }
     try {
-      const r = await extractRecording(ctx, client, model, rec.id);
+      // The filing goes to Review on its own; reading under the classifier's workspace does not file anything.
+      if (job.filing && !job.filing.open) {
+        await queueProposals(ctx.pool, [{ interactionId: job.id, workspaceId: job.workspaceId!, confidence: job.filing.confidence, evidence: job.filing.evidence, alsoConsidered: job.filing.alsoConsidered }], "extract");
+        job.filing.open = true;
+        summary.filingProposals++;
+      }
+      const r = await extractRecording(ctx, client, model, job.id, { workspaceId: job.workspaceId, inferredFrom: job.inferredFrom });
       summary.read++;
+      if (job.kind === "thread") summary.threads++;
+      if (job.kind === "unfiled") summary.unfiled++;
       summary.queued.facts += r.queued.facts;
       summary.queued.speakers += r.queued.speakers;
       summary.queued.projects += r.queued.projects;
       summary.spentUsd += r.costUsd;
       ctx.log(
-        `extract:   ${label}: ${r.queued.facts} fact(s), ${r.queued.speakers} speaker match(es), ${r.queued.projects} project link(s) queued from ${r.chunks} chunk(s) ($${r.costUsd.toFixed(3)})`,
+        `extract:   ${label}${job.kind === "unfiled" ? ` (unfiled, read as ${job.workspaceId})` : ""}: ${r.queued.facts} fact(s), ${r.queued.speakers} speaker match(es), ${r.queued.projects} project link(s) queued from ${r.chunks} chunk(s) ($${r.costUsd.toFixed(3)})`,
       );
     } catch (err) {
       const msg = (err as Error).message.slice(0, 500);
       summary.failed++;
       summary.errors.push(`${label}: ${msg}`);
-      await ctx.pool.query(`update interactions set extract_error = $2 where id = $1`, [rec.id, msg]);
+      await ctx.pool.query(`update interactions set extract_error = $2 where id = $1`, [job.id, msg]);
       ctx.log(`extract:   ${label}: FAILED ${msg}`);
       if (err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError) {
         summary.stoppedEarly = "api key refused";
@@ -409,11 +583,46 @@ export async function processExtraction(ctx: WorkerContext): Promise<ExtractSumm
   return summary;
 }
 
-/** Read one recording chunk by chunk and queue what holds up. Idempotent via interactions.extracted_at. */
-export async function extractRecording(ctx: WorkerContext, client: Anthropic, model: string, interactionId: number): Promise<{ queued: ExtractSummary["queued"]; chunks: number; costUsd: number }> {
-  const rc = await loadRecordingContext(ctx.pool, interactionId);
-  const { rows: segments } = await ctx.pool.query<SegmentRow>(`select start_sec, end_sec, speaker, text from segments where interaction_id = $1 order by idx`, [interactionId]);
-  const chunks = chunkSegments(segments);
+type IndexedSegment = SegmentRow & { idx: number };
+
+/**
+ * Read one recording or thread chunk by chunk and queue what holds up. A recording is read once
+ * (interactions.extracted_at); a thread is read up to its last message (extracted_through_idx)
+ * and again from there when it grows. An unfiled recording needs opts.workspaceId.
+ */
+export async function extractRecording(
+  ctx: WorkerContext,
+  client: Anthropic,
+  model: string,
+  interactionId: number,
+  opts: { workspaceId?: string; inferredFrom?: string } = {},
+): Promise<{ queued: ExtractSummary["queued"]; chunks: number; costUsd: number }> {
+  const rc = await loadRecordingContext(ctx.pool, interactionId, opts);
+  const { rows: segments } = await ctx.pool.query<IndexedSegment>(`select idx, start_sec, end_sec, speaker, text from segments where interaction_id = $1 order by idx`, [interactionId]);
+  const thread = isThread(rc.kind);
+  const lastIdx = segments.length ? segments[segments.length - 1].idx : null;
+  let chunks: SegmentRow[][];
+  if (thread) {
+    const {
+      rows: [state],
+    } = await ctx.pool.query(`select extracted_through_idx from interactions where id = $1`, [interactionId]);
+    const through = state?.extracted_through_idx ?? -1;
+    const fresh = segments.filter((s) => s.idx > through);
+    const earlier = segments.filter((s) => s.idx <= through).slice(-EARLIER_MESSAGES);
+    if (earlier.length) {
+      rc.earlierMessages = chunkText(earlier);
+      const recorded = await ctx.pool.query(
+        `select text from facts where interaction_id = $1
+          union select proposal->>'text' from review_queue where interaction_id = $1 and item_type = 'new_fact' and status <> 'rejected'
+          limit 30`,
+        [interactionId],
+      );
+      rc.alreadyRecorded = recorded.rows.map((r) => String(r.text)).filter(Boolean);
+    }
+    chunks = chunkMessages(fresh);
+  } else {
+    chunks = chunkSegments(segments);
+  }
   const context = contextText(rc);
   const found: Proposal[] = [];
   let costUsd = 0;
@@ -439,7 +648,7 @@ export async function extractRecording(ctx: WorkerContext, client: Anthropic, mo
   async function readChunks(): Promise<void> {
     for (const chunk of chunks) {
       const chunkStart = chunk[0].start_sec || 0;
-      const chunkEnd = chunk[chunk.length - 1].end_sec || 0;
+      const chunkEnd = Math.max(...chunk.map((s) => s.end_sec || s.start_sec || 0));
       const response = await client.beta.messages.parse({
         model,
         max_tokens: 16000,
@@ -451,7 +660,7 @@ export async function extractRecording(ctx: WorkerContext, client: Anthropic, mo
             role: "user",
             content: [
               { type: "text", text: context },
-              { type: "text", text: `Transcript chunk (${stamp(chunkStart)} to ${stamp(chunkEnd)}):\n\n${chunkText(chunk)}` },
+              { type: "text", text: `${thread ? "New messages" : "Transcript chunk"} (${stamp(chunkStart)} to ${stamp(chunkEnd)}):\n\n${chunkText(chunk)}` },
             ],
           },
         ],
@@ -501,7 +710,11 @@ export async function extractRecording(ctx: WorkerContext, client: Anthropic, mo
         else if (p.itemType === "link_party_interaction") queued.speakers++;
         else queued.projects++;
       }
-      await db.query(`update interactions set extracted_at = now(), extract_model = $2, extract_error = null, updated_at = now() where id = $1`, [interactionId, model]);
+      await db.query(`update interactions set extracted_at = now(), extract_model = $2, extract_error = null, extracted_through_idx = $3, updated_at = now() where id = $1`, [
+        interactionId,
+        model,
+        thread ? lastIdx : null,
+      ]);
       await db.query("commit");
     } catch (err) {
       await db.query("rollback").catch(() => {});

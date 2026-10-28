@@ -247,8 +247,8 @@ export function formatRunSummary(s: RunSummary): string {
     const x = s.extract;
     lines.push(
       x.configured
-        ? `extract: ${x.read}/${x.candidatesRecordings} recording(s) read, queued ${x.queued.facts} fact(s), ${x.queued.speakers} speaker match(es), ${x.queued.projects} project link(s); ${x.waitingOnBudget} waiting on budget, ${x.failed} failed, $${x.spentUsd.toFixed(3)} spent${x.stoppedEarly ? `; stopped early: ${x.stoppedEarly}` : ""}`
-        : `extract: off${x.candidatesRecordings ? ` (${x.candidatesRecordings} recording(s) waiting)` : ""}`,
+        ? `extract: ${x.read}/${x.candidatesRecordings + (x.candidatesThreads ?? 0)} item(s) read (${x.threads ?? 0} thread(s), ${x.unfiled ?? 0} unfiled${x.filingProposals ? `, ${x.filingProposals} filing(s) queued` : ""}), queued ${x.queued.facts} fact(s), ${x.queued.speakers} speaker match(es), ${x.queued.projects} project link(s); ${x.waitingOnBudget} waiting on budget, ${x.failed} failed, $${x.spentUsd.toFixed(3)} spent${x.stoppedEarly ? `; stopped early: ${x.stoppedEarly}` : ""}`
+        : `extract: off${x.candidatesRecordings || x.candidatesThreads ? ` (${x.candidatesRecordings} recording(s)${x.candidatesThreads ? ` and ${x.candidatesThreads} thread(s)` : ""} waiting)` : ""}`,
     );
   }
   if (s.scout) {

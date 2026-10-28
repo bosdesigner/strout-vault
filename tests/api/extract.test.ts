@@ -266,3 +266,135 @@ describe("approving a proposal applies it", () => {
     expect((await decideReview(pool, bad, "reject")).applied).toEqual([]);
   });
 });
+
+describe("texts, email and unfiled recordings (step 5 B)", () => {
+  const day = 86_400_000;
+  let threadId: number;
+
+  async function addInteraction(fields: { workspace_id: string | null; kind: string; title: string; occurred_at: Date }): Promise<number> {
+    const r = await one<{ id: string }>(`insert into interactions (workspace_id, kind, title, occurred_at, source) values ($1, $2, $3, $4, 'test') returning id`, [
+      fields.workspace_id,
+      fields.kind,
+      fields.title,
+      fields.occurred_at,
+    ]);
+    return Number(r.id);
+  }
+
+  async function addSegments(id: number, lines: Array<[number, number, string, string]>): Promise<void> {
+    for (const [idx, sec, speaker, text] of lines) {
+      await pool.query(`insert into segments (interaction_id, idx, start_sec, end_sec, speaker, text) values ($1, $2, $3, $3, $4, $5)`, [id, idx, sec, speaker, text]);
+    }
+  }
+
+  const config = (overrides: Record<string, string> = {}) => makeConfig({ EXTRACT_MAX_PER_RUN: "5", ...overrides });
+  const lastRequest = () => mock.extractRequests[mock.extractRequests.length - 1];
+
+  beforeAll(async () => {
+    // Only what this block adds is waiting.
+    await pool.query(`update interactions set extracted_at = now() where extracted_at is null`);
+  });
+
+  it("reads a recent email thread and remembers how far it read", async () => {
+    threadId = await addInteraction({ workspace_id: "another_story", kind: "email_thread", title: "Re: floor plans", occurred_at: new Date(Date.now() - 2 * day) });
+    await addSegments(threadId, [
+      [0, 0, "Tanner Durfee", "Can you send over the floor plans?"],
+      [1, 3600, "Ben", "Yes, I'll send the vetted set by Friday."],
+      [2, 7200, "Tanner Durfee", "Perfect, thanks."],
+    ]);
+    const calls = mock.extractRequests.length;
+    const r = await runWorker(makeCtx(config()), { trigger: "test", steps: ["extract"] });
+    expect(r.summary.extract).toMatchObject({ candidatesThreads: 1, read: 1, threads: 1, unfiled: 0, failed: 0 });
+    expect(mock.extractRequests.length).toBe(calls + 1);
+    expect(lastRequest().context).toMatch(/^Email thread #\d+: Re: floor plans/);
+    expect(lastRequest().context).not.toContain("Earlier messages");
+    expect(lastRequest().transcript).toMatch(/^New messages \(00:00:00 to 02:00:00\):/);
+    expect((await one(`select extracted_through_idx from interactions where id = $1`, [threadId])).extracted_through_idx).toBe(2);
+    const facts = await queue(`and interaction_id = $1 and item_type = 'new_fact'`, [threadId]);
+    expect(facts).toHaveLength(1);
+    expect(facts[0].proposal).toMatchObject({ workspace_id: "another_story", quote_start_sec: 0 });
+    expect(formatRunSummary(r.summary)).toMatch(/^extract: 1\/1 item\(s\) read \(1 thread\(s\), 0 unfiled\)/m);
+    expect((await buildReport(pool, new Date())).extraction!.threads).toBe(1);
+  });
+
+  it("is not read again until it gains messages, then only the new ones are sent", async () => {
+    const idle = await runWorker(makeCtx(config()), { trigger: "test", steps: ["extract"] });
+    expect(idle.summary.extract!.candidatesThreads).toBe(0);
+
+    await addSegments(threadId, [
+      [3, 86_400, "Tanner Durfee", "Still waiting on those plans."],
+      [4, 90_000, "Tanner Durfee", "Also, can we meet Tuesday?"],
+    ]);
+    const r = await runWorker(makeCtx(config()), { trigger: "test", steps: ["extract"] });
+    expect(r.summary.extract).toMatchObject({ read: 1, threads: 1 });
+    const req = lastRequest();
+    expect(req.transcript).toMatch(/^New messages \(24:00:00 to 25:00:00\):/);
+    expect(req.transcript).toContain("Still waiting on those plans.");
+    expect(req.transcript).not.toContain("Can you send over the floor plans?");
+    expect(req.context).toContain("Earlier messages, already read (context only; extract nothing from these):");
+    expect(req.context).toContain("Can you send over the floor plans?");
+    expect(req.context).toMatch(/Already recorded from this conversation \(do not repeat\):\n- Mock: Can you send over the floor plans\?/);
+    expect((await one(`select extracted_through_idx from interactions where id = $1`, [threadId])).extracted_through_idx).toBe(4);
+    const facts = await queue(`and interaction_id = $1 and item_type = 'new_fact'`, [threadId]);
+    expect(facts.map((f) => f.proposal.quote_start_sec)).toEqual([0, 86_400]);
+  });
+
+  it("skips threads that went quiet, personal threads, and all threads when EXTRACT_THREAD_DAYS is 0", async () => {
+    const old = await addInteraction({ workspace_id: "another_story", kind: "text_thread", title: "Texts with someone · old", occurred_at: new Date(Date.now() - 60 * day) });
+    await addSegments(old, [[0, 0, "Someone", "See you then"]]);
+    const personal = await addInteraction({ workspace_id: "personal", kind: "text_thread", title: "Texts with family", occurred_at: new Date(Date.now() - day) });
+    await addSegments(personal, [[0, 0, "Mom", "Dinner Sunday?"]]);
+    const fresh = await addInteraction({ workspace_id: "strout_arch", kind: "text_thread", title: "Texts with a client", occurred_at: new Date(Date.now() - day) });
+    await addSegments(fresh, [[0, 0, "Dana Client", "Can you call me about the kitchen?"]]);
+
+    const off = await runWorker(makeCtx(config({ EXTRACT_THREAD_DAYS: "0" })), { trigger: "test", steps: ["extract"] });
+    expect(off.summary.extract!.candidatesThreads).toBe(0);
+
+    const r = await runWorker(makeCtx(config()), { trigger: "test", steps: ["extract"] });
+    expect(r.summary.extract).toMatchObject({ candidatesThreads: 1, threads: 1 });
+    const read = await pool.query(`select id from interactions where id = any($1::bigint[]) and extracted_at is not null`, [[old, personal, fresh]]);
+    expect(read.rows.map((x) => Number(x.id))).toEqual([fresh]);
+  });
+
+  it("reads an unfiled recording the classifier files confidently, and queues the filing for review instead of filing it", async () => {
+    const id = await addInteraction({ workspace_id: null, kind: "meeting", title: "Jane Prospect: AnotherStory Assessment", occurred_at: new Date(Date.now() - day) });
+    await addSegments(id, [
+      [0, 5, "Speaker 1", "Thanks for jumping on, Jane."],
+      [1, 60, "Speaker 2", "I'll send you the survey and the as-built this week."],
+    ]);
+    const r = await runWorker(makeCtx(config()), { trigger: "test", steps: ["extract"] });
+    expect(r.summary.extract).toMatchObject({ read: 1, unfiled: 1, filingProposals: 1, failed: 0 });
+    expect(lastRequest().context).toMatch(/^Recording #\d+: Jane Prospect: AnotherStory Assessment/);
+    expect(lastRequest().context).toMatch(/Workspace: another_story \(not filed yet; inferred from .+\)/);
+
+    const row = await one(`select workspace_id, extracted_at from interactions where id = $1`, [id]);
+    expect(row.workspace_id).toBeNull(); // reading never files
+    expect(row.extracted_at).not.toBeNull();
+    const filing = await pool.query(`select status, proposal from review_queue where interaction_id = $1 and item_type = 'interaction_workspace'`, [id]);
+    expect(filing.rows).toHaveLength(1);
+    expect(filing.rows[0]).toMatchObject({ status: "open", proposal: { workspace_id: "another_story", proposed_by: "extract" } });
+    const facts = await queue(`and interaction_id = $1 and item_type = 'new_fact'`, [id]);
+    expect(facts[0].proposal.workspace_id).toBe("another_story");
+  });
+
+  it("leaves unfiled recordings alone when the filing was rejected, the guess is phalanx, or EXTRACT_UNFILED is 0", async () => {
+    const rejected = await addInteraction({ workspace_id: null, kind: "meeting", title: "Sam Somebody: AnotherStory Assessment", occurred_at: new Date(Date.now() - day) });
+    await addSegments(rejected, [[0, 5, "Speaker 1", "Hello"]]);
+    await pool.query(`insert into review_queue (item_type, proposal, reason, interaction_id, status, decided_at) values ('interaction_workspace', $1::jsonb, 'test', $2, 'rejected', now())`, [
+      JSON.stringify({ interaction_id: rejected, workspace_id: "another_story" }),
+      rejected,
+    ]);
+    const investor = await addInteraction({ workspace_id: null, kind: "meeting", title: "Phalanx investor update", occurred_at: new Date(Date.now() - day) });
+    await addSegments(investor, [[0, 5, "Speaker 1", "Quarterly numbers"]]);
+    const later = await addInteraction({ workspace_id: null, kind: "meeting", title: "Lee Prospect: AnotherStory Assessment", occurred_at: new Date(Date.now() - day) });
+    await addSegments(later, [[0, 5, "Speaker 1", "Hi Lee"]]);
+
+    const off = await runWorker(makeCtx(config({ EXTRACT_UNFILED: "0" })), { trigger: "test", steps: ["extract"] });
+    expect(off.summary.extract).toMatchObject({ candidatesRecordings: 0, read: 0 });
+
+    const r = await runWorker(makeCtx(config()), { trigger: "test", steps: ["extract"] });
+    expect(r.summary.extract).toMatchObject({ unfiled: 1 });
+    const read = await pool.query(`select id from interactions where id = any($1::bigint[]) and extracted_at is not null`, [[rejected, investor, later]]);
+    expect(read.rows.map((x) => Number(x.id))).toEqual([later]);
+  });
+});
