@@ -28,3 +28,11 @@
 #   Another Story: another_story
 #   Strout Architecture: strout_arch
 #   Family: personal
+
+# TikTok and Instagram DMs whose sender is nobody the vault knows yet: the workspace to file them
+# under instead of `inbox`. A sender who is known (matched by handle on the People page) always
+# decides first, and phalanx is never taken from here. Leave a source out to keep its unknown
+# senders in `inbox` until you approve them as people.
+# dm_sources:
+#   tiktok: another_story
+#   instagram: another_story

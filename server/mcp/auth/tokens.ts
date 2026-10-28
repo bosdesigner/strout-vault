@@ -23,7 +23,7 @@ export const INGEST_DEVICE_SCOPE: TokenScope = "ingest:device";
 export const INGEST_SCOPES: TokenScope[] = [INGEST_MESSAGES_SCOPE, INGEST_DEVICE_SCOPE];
 
 /** Which collector a token was made for (api_tokens.purpose); the Sources view reads it. */
-export const TOKEN_PURPOSES = ["mcp", "imessage", "mac_media", "ios_shortcut"] as const;
+export const TOKEN_PURPOSES = ["mcp", "imessage", "social_dm", "mac_media", "ios_shortcut"] as const;
 export type TokenPurpose = (typeof TOKEN_PURPOSES)[number];
 
 export function isIngestOnly(scopes: readonly string[]): boolean {
@@ -118,8 +118,8 @@ export function tokenPurpose(scopes: TokenScope[], wanted: TokenPurpose | null):
     return wanted ?? "mac_media";
   }
   if (scopes.includes(INGEST_MESSAGES_SCOPE)) {
-    if (wanted && wanted !== "imessage") throw new Error("an ingest:messages token is for the iMessage collector");
-    return "imessage";
+    if (wanted && wanted !== "imessage" && wanted !== "social_dm") throw new Error("an ingest:messages token is for the iMessage collector or the TikTok DM collector");
+    return wanted ?? "imessage";
   }
   if (wanted && wanted !== "mcp") throw new Error(`purpose ${wanted} needs an ingest scope`);
   return "mcp";

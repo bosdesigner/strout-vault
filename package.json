@@ -25,6 +25,7 @@
     "workspaces:propose": "tsx scripts/propose-workspaces.ts",
     "messages:gmail": "tsx scripts/gmail-backfill.ts",
     "messages:meet": "tsx scripts/meet-backfill.ts",
+    "messages:instagram": "tsx scripts/instagram-sync.ts",
     "hash-password": "tsx scripts/hash-password.ts",
     "test": "vitest run",
     "test:e2e": "playwright test",
@@ -90,6 +91,7 @@
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
     "@types/supertest": "^6.0.2",
+    "happy-dom": "^15.11.7",
     "node-typedstream": "^1.4.1",
     "supertest": "^7.0.0",
     "vitest": "^3.0.0"

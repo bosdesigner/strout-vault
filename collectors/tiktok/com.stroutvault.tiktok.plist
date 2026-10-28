@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Strout Vault TikTok DM collector, every 30 minutes. Copy to ~/Library/LaunchAgents/, replace the
+  REPLACE_ME values (see README.md), then:
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.stroutvault.tiktok.plist
+  The token is NOT in this file: the collector reads ~/.strout-vault/tiktok-token (chmod 600).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.stroutvault.tiktok</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>REPLACE_ME_NODE_PATH</string>
+    <string>REPLACE_ME_REPO/collectors/tiktok/collector.mjs</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>STROUT_VAULT_URL</key>
+    <string>REPLACE_ME_URL</string>
+    <key>TIKTOK_ACCOUNT</key>
+    <string>hemakesbigmoves</string>
+    <!-- Set to 1 if TikTok refuses the headless browser (the Sources panel then says "signed out"). -->
+    <key>TIKTOK_HEADED</key>
+    <string>0</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <!-- Counts only; message text is never printed. -->
+  <key>StandardOutPath</key>
+  <string>/tmp/strout-vault-tiktok.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/strout-vault-tiktok.log</string>
+</dict>
+</plist>

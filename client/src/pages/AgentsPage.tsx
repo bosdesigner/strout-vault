@@ -38,7 +38,7 @@ interface ApiToken {
   workspaceScope: string[];
   /** vault:read + vault:propose (MCP), or one ingest scope alone (ingest:messages, ingest:device). */
   scopes?: string[];
-  purpose?: "mcp" | "imessage" | "mac_media" | "ios_shortcut" | null;
+  purpose?: "mcp" | "imessage" | "social_dm" | "mac_media" | "ios_shortcut" | null;
   createdBy: string | null;
   createdAt: string;
   lastUsedAt: string | null;
@@ -320,7 +320,11 @@ function TokensTab({ status }: { status: Status | undefined }) {
                 {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               </Button>
             </div>
-            {minted.item.scopes?.includes("ingest:messages") ? (
+            {minted.item.purpose === "social_dm" ? (
+              <p className="text-xs text-muted-foreground">
+                On the Mac: <code className="rounded bg-muted px-1">pbpaste &gt; ~/.strout-vault/tiktok-token &amp;&amp; chmod 600 ~/.strout-vault/tiktok-token</code> (collectors/tiktok/README.md).
+              </p>
+            ) : minted.item.scopes?.includes("ingest:messages") ? (
               <p className="text-xs text-muted-foreground">
                 On the Mac: <code className="rounded bg-muted px-1">pbpaste &gt; ~/.strout-vault/imessage-token &amp;&amp; chmod 600 ~/.strout-vault/imessage-token</code> (collectors/imessage/README.md).
               </p>
@@ -361,6 +365,7 @@ function TokensTab({ status }: { status: Status | undefined }) {
                 <SelectContent>
                   <SelectItem value="mcp">MCP: read and propose</SelectItem>
                   <SelectItem value="ingest">iMessage collector: send texts only</SelectItem>
+                  <SelectItem value="social_dm">TikTok DM collector: send DMs only</SelectItem>
                   <SelectItem value="mac_media">Mac media collector: voice memos, call recordings, notes</SelectItem>
                   <SelectItem value="ios_shortcut">iPhone Shortcut: send audio only</SelectItem>
                 </SelectContent>
@@ -432,10 +437,11 @@ function TokensTab({ status }: { status: Status | undefined }) {
   );
 }
 
-type TokenKind = "mcp" | "ingest" | "mac_media" | "ios_shortcut";
+type TokenKind = "mcp" | "ingest" | "social_dm" | "mac_media" | "ios_shortcut";
 const TOKEN_KINDS: Record<TokenKind, { scopes: string[] | undefined; purpose: string | undefined }> = {
   mcp: { scopes: undefined, purpose: undefined },
   ingest: { scopes: ["ingest:messages"], purpose: "imessage" },
+  social_dm: { scopes: ["ingest:messages"], purpose: "social_dm" },
   mac_media: { scopes: ["ingest:device"], purpose: "mac_media" },
   ios_shortcut: { scopes: ["ingest:device"], purpose: "ios_shortcut" },
 };

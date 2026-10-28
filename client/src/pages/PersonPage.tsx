@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, Globe, Mail, MapPin, Pencil, Phone, Plus, User } from "lucide-react";
+import { AtSign, Building2, Globe, Mail, MapPin, Pencil, Phone, Plus, User } from "lucide-react";
 import { api } from "@/lib/api";
 import type { PersonDetail } from "@shared/types";
 import { ROLE_LABEL } from "@/lib/format";
@@ -124,10 +124,23 @@ export default function PersonPage() {
                 {p.phones.map((ph) => (
                   <div key={ph} className="flex items-center gap-2"><Phone className="h-4 w-4 text-muted-foreground" /><a className="hover:underline tabular" href={`tel:${ph}`}>{ph}</a></div>
                 ))}
+                {(p.handles ?? []).map((h) => {
+                  const [platform, user] = h.split(":");
+                  const href = platform === "tiktok" ? `https://www.tiktok.com/@${user}` : `https://www.instagram.com/${user}/`;
+                  return (
+                    <div key={h} className="flex items-center gap-2">
+                      <AtSign className="h-4 w-4 text-muted-foreground" />
+                      <a className="truncate hover:underline" href={href} target="_blank" rel="noreferrer">
+                        {user}
+                      </a>
+                      <span className="text-xs text-muted-foreground">{platform === "tiktok" ? "TikTok" : "Instagram"}</span>
+                    </div>
+                  );
+                })}
                 {p.location && <div className="flex items-center gap-2"><MapPin className="h-4 w-4 text-muted-foreground" />{p.location}</div>}
                 {p.website && <div className="flex items-center gap-2"><Globe className="h-4 w-4 text-muted-foreground" /><a className="truncate hover:underline" href={p.website} target="_blank" rel="noreferrer">{p.website.replace(/^https?:\/\//, "")}</a></div>}
                 {p.notes && <p className="whitespace-pre-wrap pt-1 text-muted-foreground">{p.notes}</p>}
-                {!p.emails.length && !p.phones.length && !p.location && !p.website && !p.notes && <p className="text-muted-foreground">No contact details yet.</p>}
+                {!p.emails.length && !p.phones.length && !(p.handles ?? []).length && !p.location && !p.website && !p.notes && <p className="text-muted-foreground">No contact details yet.</p>}
               </dl>
             )}
           </section>
@@ -231,6 +244,13 @@ export default function PersonPage() {
 function ContactForm({ p, saving, onCancel, onSave }: { p: PersonDetail; saving: boolean; onCancel: () => void; onSave: (body: Record<string, unknown>) => Promise<unknown> }) {
   const [emails, setEmails] = useState(p.emails.join(", "));
   const [phones, setPhones] = useState(p.phones.join(", "));
+  const handlesOf = (platform: string) =>
+    (p.handles ?? [])
+      .filter((h) => h.startsWith(`${platform}:`))
+      .map((h) => `@${h.slice(platform.length + 1)}`)
+      .join(", ");
+  const [tiktok, setTiktok] = useState(handlesOf("tiktok"));
+  const [instagram, setInstagram] = useState(handlesOf("instagram"));
   const [location, setLocation] = useState(p.location ?? "");
   const [website, setWebsite] = useState(p.website ?? "");
   const [notes, setNotes] = useState(p.notes ?? "");
@@ -240,7 +260,10 @@ function ContactForm({ p, saving, onCancel, onSave }: { p: PersonDetail; saving:
       className="mt-3 space-y-3"
       onSubmit={(e) => {
         e.preventDefault();
-        void onSave({ emails: split(emails), phones: split(phones), location: location.trim() || null, website: website.trim() || null, notes: notes.trim() || null });
+        const handles = [...split(tiktok).map((u) => `tiktok:${u}`), ...split(instagram).map((u) => `instagram:${u}`)];
+        // Only sent when there are handles to keep or remove, so editing contacts works before migration 0011 too.
+        const handleChange = handles.length || (p.handles ?? []).length ? { handles } : {};
+        void onSave({ emails: split(emails), phones: split(phones), ...handleChange, location: location.trim() || null, website: website.trim() || null, notes: notes.trim() || null });
       }}
     >
       <div className="space-y-1">
@@ -250,6 +273,16 @@ function ContactForm({ p, saving, onCancel, onSave }: { p: PersonDetail; saving:
       <div className="space-y-1">
         <Label htmlFor="c-phones">Phones</Label>
         <Input id="c-phones" value={phones} onChange={(e) => setPhones(e.target.value)} placeholder="comma separated" />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <Label htmlFor="c-tiktok">TikTok</Label>
+          <Input id="c-tiktok" value={tiktok} onChange={(e) => setTiktok(e.target.value)} placeholder="@username" />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="c-instagram">Instagram</Label>
+          <Input id="c-instagram" value={instagram} onChange={(e) => setInstagram(e.target.value)} placeholder="@username" />
+        </div>
       </div>
       <div className="space-y-1">
         <Label htmlFor="c-location">Location</Label>

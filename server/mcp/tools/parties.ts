@@ -2,12 +2,14 @@
 import { z } from "zod";
 import { scopeSql } from "../scope.ts";
 import { clampLimit, dateOnly, deepLink, iso, ToolError, type ToolContext, type ToolDef } from "./types.ts";
+import { normalizeIdentifier } from "../../messages/identity.ts";
 
 const schema = {
   id: z.coerce.number().int().positive().optional().describe("Party id, when known (from search results, get_interaction participants or an earlier get_party)."),
   name: z.string().min(1).max(200).optional().describe("Person or company name, or part of one. Fuzzy: 'kevin', 'McGuire' and 'Kevin McGuire' all work. Ambiguous matches return candidates instead of a profile."),
   email: z.string().min(3).max(200).optional().describe("An email address on file for the party."),
   phone: z.string().min(3).max(50).optional().describe("A phone number on file; digits only are compared."),
+  handle: z.string().min(3).max(120).optional().describe('A TikTok or Instagram account on file, as "tiktok:@username" or "instagram:@username".'),
 };
 
 /**
@@ -30,12 +32,14 @@ export const getParty: ToolDef<typeof schema> = {
   name: "get_party",
   title: "Get a person or company",
   description:
-    "Look up a person or organisation by id, name (fuzzy), email or phone and return their profile: contact fields, affiliations (person ↔ company), roles by workspace (client, contractor, vendor, investor…), relationships, projects, the last 10 interactions they took part in, facts about them or owned by them, and their lead submissions (source, stage, status, what they asked for). " +
+    "Look up a person or organisation by id, name (fuzzy), email, phone or TikTok/Instagram handle and return their profile: contact fields, affiliations (person ↔ company), roles by workspace (client, contractor, vendor, investor…), relationships, projects, the last 10 interactions they took part in, facts about them or owned by them, and their lead submissions (source, stage, status, what they asked for). " +
     "When a name matches several people the result has `ambiguous: true` and a `candidates` list: pick one and call again with its id. Only what the token's workspace scope allows is returned. Includes a deep_link to the person's page.",
   inputSchema: schema,
   readOnly: true,
   async run(args, ctx) {
-    if (!args.id && !args.name && !args.email && !args.phone) throw new ToolError("invalid_argument", "give one of id, name, email or phone");
+    if (!args.id && !args.name && !args.email && !args.phone && !args.handle) throw new ToolError("invalid_argument", "give one of id, name, email, phone or handle");
+    const handle = args.handle ? normalizeIdentifier(args.handle) : null;
+    if (args.handle && handle?.kind !== "handle") throw new ToolError("invalid_argument", 'handle must look like "tiktok:@username" or "instagram:@username"');
     const params: unknown[] = [];
     const p = (v: unknown) => {
       params.push(v);
@@ -45,6 +49,7 @@ export const getParty: ToolDef<typeof schema> = {
     let where: string;
     let order = "p.name";
     if (args.id) where = `p.id = ${p(args.id)}`;
+    else if (handle) where = `${p(handle.value)} = any(p.handles)`;
     else if (args.email) where = `exists (select 1 from unnest(p.emails) e where lower(e) = lower(${p(args.email.trim())}))`;
     else if (args.phone) {
       // Digits only, and the last ten digits decide when both sides have at least ten (country codes vary).
@@ -96,7 +101,7 @@ async function profile(ctx: ToolContext, id: number): Promise<Record<string, unk
   const affParams: unknown[] = [id];
   const affVisible = visiblePartySql(ctx, affParams, "o");
   const [party, rolesQ, aff, inters, projects, factsQ, rels] = await Promise.all([
-    ctx.reader.query(`select id, kind, name, emails, phones, location, website, notes, created_at, updated_at from parties where id = $1`, [id]),
+    ctx.reader.query(`select * from parties where id = $1`, [id]),
     ctx.reader.query(
       `select r.workspace_id, w.name as workspace_name, r.role, r.status, r.market, r.detail, r.started_at, r.ended_at
          from roles r join workspaces w on w.id = r.workspace_id where r.party_id = $1 and ${roles.sql} order by w.name, r.role`,
@@ -155,6 +160,7 @@ async function profile(ctx: ToolContext, id: number): Promise<Record<string, unk
     name: pr.name,
     emails: pr.emails ?? [],
     phones: pr.phones ?? [],
+    handles: (pr.handles ?? []).map((h: string) => h.replace(":", ": @")),
     location: pr.location,
     website: pr.website,
     notes: pr.notes,

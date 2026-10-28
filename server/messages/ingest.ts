@@ -1,12 +1,13 @@
-// The one path every text and email takes into the vault, whichever collector read it (the
-// iMessage collector on the Mac via POST /api/ingest/messages, or the Gmail worker step):
+// The one path every text, email and DM takes into the vault, whichever collector read it (the
+// iMessage collector on the Mac via POST /api/ingest/messages, the Gmail worker step, the TikTok
+// DM collector on the Mac via POST /api/ingest/social, or the Instagram worker step):
 //
 //   filter    drop what must never be stored: Gmail Promotions/Social/Updates/Forums, mail with
 //             a List-Unsubscribe header, blocklisted senders, SMS short codes, one-time codes
 //   redact    card numbers, SSNs and bank routing/account numbers become [REDACTED]
 //   merge     with what the thread already holds (a day of texts arrives in several batches; a
 //             Gmail thread grows), by message id
-//   match     senders to parties by E.164 phone / lowercase email; unknown identifiers are queued
+//   match     senders to parties by E.164 phone / lowercase email / "<platform>:<username>" handle; unknown identifiers are queued
 //             for review (item_type new_party), never created
 //   route     new threads to the one workspace their participants map to, else `inbox`, plus a
 //             workspace_assignment review row when there is a workspace to suggest (several
@@ -21,13 +22,15 @@
 import crypto from "node:crypto";
 import type pg from "pg";
 import { isOneTimeCode, redactOneTimeCodes, redactSensitive } from "./redact.ts";
-import { emailDomain, isOwner, normalizeIdentifier, phoneDigitKeys, type Identifier, type OwnerIdentity } from "./identity.ts";
+import { emailDomain, handleDisplay, handlePlatform, isOwner, normalizeIdentifier, PLATFORM_LABEL, phoneDigitKeys, type Identifier, type OwnerIdentity, type SocialPlatform } from "./identity.ts";
 import type { MessageRules } from "./rules.ts";
 
-export type MessageSource = "imessage" | "gmail";
+export type MessageSource = "imessage" | "gmail" | SocialPlatform;
 export type ThreadKind = "text_thread" | "email_thread";
 export const MESSAGE_KINDS: ThreadKind[] = ["text_thread", "email_thread"];
-export const MESSAGE_SOURCES: MessageSource[] = ["imessage", "gmail"];
+export const MESSAGE_SOURCES: MessageSource[] = ["imessage", "gmail", "tiktok", "instagram"];
+export const DM_SOURCES: MessageSource[] = ["tiktok", "instagram"];
+export const isDmSource = (s: string): s is SocialPlatform => s === "tiktok" || s === "instagram";
 export const INBOX = "inbox";
 export const NEVER_AUTO_ASSIGNED = ["phalanx"];
 export const LOCAL_TIMEZONE = "America/Chicago";
@@ -43,7 +46,7 @@ export interface MessageInput {
   id: string;
   sentAt: Date;
   fromMe: boolean;
-  /** Raw sender handle: phone, email, short code. Null for Ben's own iMessages. */
+  /** Raw sender handle: phone, email, short code, "<platform>:<username>". Null for Ben's own iMessages. */
   from: string | null;
   fromName?: string | null;
   /** Raw recipient handles (To on email); used to find who Ben wrote to. */
@@ -139,6 +142,10 @@ export function skipReason(m: MessageInput, thread: Pick<ThreadInput, "source" |
   }
   if (thread.source === "imessage") {
     if (isOneTimeCode(m.text)) return "one_time_code";
+  } else if (isDmSource(thread.source)) {
+    // A DM is a person writing, rarely a code; a short one that is just a code is dropped, and a
+    // longer one ("the 2021 IRC code, permit 48213") keeps its words with code-like digits redacted.
+    if (m.text.length <= 200 && isOneTimeCode(m.text)) return "one_time_code";
   } else {
     // A verification email is short or says so in its subject. A long email that merely mentions
     // "the building code" and a number keeps its body, with any code-like digit runs redacted.
@@ -153,6 +160,7 @@ function blocked(id: Identifier, rules: MessageRules): boolean {
   const b = rules.blocklist;
   if (id.kind === "email") return b.emails.has(id.value) || b.domains.has(emailDomain(id.value));
   if (id.kind === "phone") return b.phones.has(id.value);
+  if (id.kind === "handle") return b.handles?.has(id.value) ?? false;
   return false;
 }
 
@@ -169,10 +177,10 @@ export function localDay(d: Date): string {
   return dayFmt.format(d);
 }
 
-/** Title for a text thread: the chat's name, or who it was with, and the local day. */
-export function textThreadTitle(chatName: string | null | undefined, names: string[], day: string): string {
+/** Title for a text thread: the chat's name, or who it was with, and the local day. "TikTok DMs with …" for a DM. */
+export function textThreadTitle(chatName: string | null | undefined, names: string[], day: string, source: MessageSource = "imessage"): string {
   const who = chatName?.trim() || (names.length ? names.slice(0, 3).join(", ") + (names.length > 3 ? ` +${names.length - 3}` : "") : "unknown");
-  return `Texts with ${who} · ${day}`;
+  return `${isDmSource(source) ? `${PLATFORM_LABEL[source]} DMs` : "Texts"} with ${who} · ${day}`;
 }
 
 /** sha256 over the normalised message ids and bodies, in order. */
@@ -204,6 +212,14 @@ export async function matchParties(db: pg.Pool | pg.PoolClient, ids: Identifier[
   const out = new Map<string, PartyRef>();
   const emails = [...new Set(ids.filter((i) => i.kind === "email").map((i) => i.value))];
   const phones = [...new Set(ids.filter((i) => i.kind === "phone").map((i) => i.value))];
+  const handles = [...new Set(ids.filter((i) => i.kind === "handle").map((i) => i.value))];
+  if (handles.length) {
+    const { rows } = await db.query(
+      `select p.id, p.name, lower(trim(h)) as key from parties p cross join lateral unnest(p.handles) h where lower(trim(h)) = any($1::text[]) order by p.id`,
+      [handles],
+    );
+    for (const r of rows) if (!out.has(r.key)) out.set(r.key, { id: Number(r.id), name: r.name });
+  }
   if (emails.length) {
     const { rows } = await db.query(
       `select p.id, p.name, lower(trim(e)) as key from parties p cross join lateral unnest(p.emails) e where lower(trim(e)) = any($1::text[]) order by p.id`,
@@ -239,7 +255,16 @@ export interface RouteDecision {
  * affiliation with an org, or on a project). Email identifiers that contribute nothing fall back
  * to the domain rules. Exactly one workspace wins; anything else, and phalanx always, is inbox.
  */
-export async function routeThread(db: pg.Pool | pg.PoolClient, partyIds: number[], emails: string[], partyByEmail: Map<string, PartyRef>, rules: MessageRules, known: Set<string>): Promise<RouteDecision> {
+export async function routeThread(
+  db: pg.Pool | pg.PoolClient,
+  partyIds: number[],
+  emails: string[],
+  partyByEmail: Map<string, PartyRef>,
+  rules: MessageRules,
+  known: Set<string>,
+  /** A DM source: its dm_sources rule files a thread whose participants map nowhere. */
+  source?: string,
+): Promise<RouteDecision> {
   const perParty = new Map<number, Set<string>>();
   const ruled = partyIds.filter((id) => rules.routing.parties.has(id));
   for (const id of ruled) perParty.set(id, new Set([rules.routing.parties.get(id)!]));
@@ -274,6 +299,8 @@ export async function routeThread(db: pg.Pool | pg.PoolClient, partyIds: number[
     const ws = rules.routing.domains.get(emailDomain(email));
     if (ws) vote(ws);
   }
+  const fallback = source ? rules.routing.sources?.get(source) : undefined;
+  if (!votes.size && fallback) vote(fallback);
   const candidates = [...votes.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([ws]) => ws);
   if (candidates.length === 1 && !NEVER_AUTO_ASSIGNED.includes(candidates[0])) return { workspaceId: candidates[0], review: null };
   if (candidates.length === 1) return { workspaceId: INBOX, review: { suggested: candidates[0], candidates, reason: `Participants map to ${candidates[0]}, which is never assigned automatically` } };
@@ -380,7 +407,7 @@ function toStored(m: MessageInput, owner: OwnerIdentity, thread: ThreadInput, co
   const sender = normalizeIdentifier(m.from);
   const fromMe = m.fromMe || isOwner(owner, sender);
   let text = clean(m.text).replace(/\r\n/g, "\n").trim();
-  if (thread.source === "gmail") {
+  if (thread.source === "gmail" || isDmSource(thread.source)) {
     const otp = redactOneTimeCodes(text);
     text = otp.text;
     counter.redactions += otp.count;
@@ -395,7 +422,7 @@ function toStored(m: MessageInput, owner: OwnerIdentity, thread: ThreadInput, co
   }));
   const to = (m.to ?? [])
     .map((t) => normalizeIdentifier(t))
-    .filter((t): t is Identifier => !!t && (t.kind === "email" || t.kind === "phone"))
+    .filter((t): t is Identifier => !!t && (t.kind === "email" || t.kind === "phone" || t.kind === "handle"))
     .map((t) => t.value);
   return {
     id: String(m.id),
@@ -472,7 +499,7 @@ async function ingestOne(
   const identifiers = new Map<string, { id: Identifier; name: string | null }>();
   const addId = (raw: string | null | undefined, name: string | null | undefined) => {
     const id = normalizeIdentifier(raw);
-    if (!id || (id.kind !== "phone" && id.kind !== "email") || isOwner(opts.owner, id)) return;
+    if (!id || (id.kind !== "phone" && id.kind !== "email" && id.kind !== "handle") || isOwner(opts.owner, id)) return;
     const prev = identifiers.get(id.value);
     if (!prev) identifiers.set(id.value, { id, name: name?.trim() || null });
     else if (!prev.name && name?.trim()) prev.name = name.trim();
@@ -497,6 +524,9 @@ async function ingestOne(
   const speakerOf = (m: StoredMessage): { name: string; partyId: number | null } => {
     if (m.fromMe) return { name: opts.owner.name, partyId: ownerParty?.id ?? null };
     const party = m.from ? parties.get(m.from) : undefined;
+    // On TikTok and Instagram the display name is whatever the person typed ("🔥Mike Builds🔥"):
+    // the vault's name for a known person comes first, then that, then the @handle.
+    if (m.fromKind === "handle" && m.from) return { name: party?.name || m.fromName || handleDisplay(m.from), partyId: party?.id ?? null };
     return { name: m.fromName || party?.name || m.from || "Unknown", partyId: party?.id ?? null };
   };
   const t0 = messages.length ? messages[0].sentAt.getTime() : Date.now();
@@ -512,8 +542,13 @@ async function ingestOne(
     (thread.kind === "text_thread"
       ? textThreadTitle(
           thread.meta?.chat_name as string | null | undefined,
-          participantsRaw.map((p) => (p.party_id ? parties.get(p.identifier)?.name : null) || p.name || p.identifier),
+          participantsRaw.map(
+            (p) =>
+              (p.party_id ? parties.get(p.identifier)?.name : null) ||
+              (p.kind === "handle" ? (p.name ? `${p.name} (${handleDisplay(p.identifier)})` : handleDisplay(p.identifier)) : p.name || p.identifier),
+          ),
           String(thread.meta?.local_date ?? (messages[0] ? localDay(messages[0].sentAt) : "")),
+          thread.source,
         )
       : null);
   const title = redactOneTimeCodes(redactSensitive(clean(rawTitle ?? "")).text).text.slice(0, 300) || null;
@@ -557,7 +592,7 @@ async function ingestOne(
     if (existing) summary.updated++;
     else {
       summary.created++;
-      const route = await routeThread(pool, partyIds, participantsRaw.filter((p) => p.kind === "email").map((p) => p.identifier), parties, opts.rules, known);
+      const route = await routeThread(pool, partyIds, participantsRaw.filter((p) => p.kind === "email").map((p) => p.identifier), parties, opts.rules, known, thread.source);
       summary.routed[route.workspaceId] = (summary.routed[route.workspaceId] ?? 0) + 1;
       if (route.review?.suggested) summary.reviewWorkspace++;
     }
@@ -570,7 +605,7 @@ async function ingestOne(
   try {
     await db.query("begin");
     let route: RouteDecision | null = null;
-    if (!existing) route = await routeThread(db, partyIds, participantsRaw.filter((p) => p.kind === "email").map((p) => p.identifier), parties, opts.rules, known);
+    if (!existing) route = await routeThread(db, partyIds, participantsRaw.filter((p) => p.kind === "email").map((p) => p.identifier), parties, opts.rules, known, thread.source);
     const ins = await db.query<{ id: number; inserted: boolean; workspace_id: string | null }>(
       `insert into interactions (workspace_id, kind, occurred_at, title, transcript, source, source_ref, content_sha256, participants_raw, source_payload, pipeline_status, pipeline_updated_at, updated_at)
        values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, 'ready', now(), now())
@@ -671,18 +706,22 @@ async function queueNewParty(pool: pg.Pool, u: UnknownSeen): Promise<boolean> {
     }
     return false;
   }
-  const name = u.name || u.identifier.value;
+  const isHandle = u.identifier.kind === "handle";
+  const shown = isHandle ? handleDisplay(u.identifier.value) : u.identifier.value;
+  const name = u.name || shown;
   const proposal = {
     kind: "person",
     name,
-    ...(u.identifier.kind === "email" ? { emails: [u.identifier.value] } : { phones: [u.identifier.value] }),
+    ...(u.identifier.kind === "email" ? { emails: [u.identifier.value] } : isHandle ? { handles: [u.identifier.value] } : { phones: [u.identifier.value] }),
     source: "messages",
     proposed_at: new Date().toISOString(),
     evidence,
   };
   await pool.query(`insert into review_queue (item_type, proposal, reason, interaction_id, status) values ('new_party', $1::jsonb, $2, $3, 'open')`, [
     JSON.stringify(proposal),
-    `Unknown ${u.identifier.kind === "email" ? "email sender" : "phone number"} in ${evidence.sources.includes("gmail") ? "email" : "texts"}: ${name}${u.name ? ` (${u.identifier.value})` : ""}, ${evidence.message_count} message(s)`,
+    isHandle
+      ? `Unknown ${PLATFORM_LABEL[handlePlatform(u.identifier.value) ?? "tiktok"]} account in DMs: ${name}${u.name ? ` (${shown})` : ""}, ${evidence.message_count} message(s)`
+      : `Unknown ${u.identifier.kind === "email" ? "email sender" : "phone number"} in ${evidence.sources.includes("gmail") ? "email" : "texts"}: ${name}${u.name ? ` (${u.identifier.value})` : ""}, ${evidence.message_count} message(s)`,
     u.interactionId,
   ]);
   return true;
