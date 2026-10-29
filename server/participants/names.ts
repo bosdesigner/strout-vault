@@ -194,7 +194,7 @@ export function editDistance(a: string, b: string): number {
 /**
  * Whether two names are probably the same person spelled differently: same number of words and
  * a small edit distance overall ("Bejamin Schiavi" ~ "Benjamin Schiavi"), or the same last name with
- * a first name that is a typo or a prefix of the other ("Jon Brou" ~ "Jonathan Brou"). Exact matches
+ * a first name that is a typo or a prefix of the other ("Jon Bray" ~ "Jonathan Bray"). Exact matches
  * return false: those are not "fuzzy". A fuzzy match is only ever a suggestion for review.
  */
 export function isFuzzyNameMatch(a: string, b: string): boolean {
