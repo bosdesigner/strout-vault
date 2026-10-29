@@ -93,6 +93,8 @@ psql "$DATABASE_URL" -f db/migrations/0003_access_and_calls.sql
 
 **Follow-through adds `db/migrations/0012_followthrough.sql`** (after 0011): `facts.closed_at`, `closed_by_interaction_id` and `followup_checked_at`, and an index on the follow-through proposal key; `/api/health` then reports `v0.12`. The step and its settings are in [`docs/FOLLOW-THROUGH.md`](docs/FOLLOW-THROUGH.md#c-close-the-loop--built).
 
+**Phase 1 (facts and filing) adds `db/migrations/0013_facts_and_filing.sql`** (after 0012): the `task` fact kind, `facts.quote` / `message_index` / `due_text` / `origin` / `dedupe_key`, the `fact_sources` table (every moment a fact was said), `interactions.facts_status` / `participants_resolved_at` / `filed_by` and `interaction_participants.resolved_by`; `/api/health` then reports `v0.13`. What changed, the backfill order and the proof are in [`docs/phase1-verification.md`](docs/phase1-verification.md).
+
 **MCP roles.** The MCP read tools connect as `mcp_reader` (SELECT only) and `propose_update` as `mcp_proposer` (INSERT into `review_queue` only), never as the app role. In the Neon console (Roles & Databases → Add role) create `mcp_reader` and `mcp_proposer` on the production branch, copy each role's pooled connection string into the secrets as `MCP_READER_DATABASE_URL` and `MCP_PROPOSER_DATABASE_URL`, then apply `0006_mcp.sql` as the owner so the grants land (the file skips grants with a NOTICE when a role is missing; re-apply after creating it). Details, the Claude.ai connector setup and the embedding backfill are in [`docs/MCP.md`](docs/MCP.md).
 
 ### 4. Click Deploy

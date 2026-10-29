@@ -127,10 +127,43 @@ only, set `EXTRACT_THREAD_DAYS=0` and `EXTRACT_UNFILED=0`. To try threads by han
 EXTRACT_MAX_PER_RUN=1 EXTRACT_THREADS_PER_RUN=5 npm run worker:dev -- --steps extract
 ```
 
+## Phase 1: facts written directly (2026-10-29)
+
+Before Phase 1 every fact waited on Review, so `list_open_commitments` stayed empty until Ben
+approved items one by one (and the step had never run: `EXTRACT_MONTHLY_BUDGET_USD` was unset).
+Now, with `EXTRACT_FACTS_MODE=direct` (the default):
+
+- A commitment, task, follow-up, decision or price at `EXTRACT_FACT_MIN_CONFIDENCE` (0.75) or more is
+  written to `facts` as open straight away (`origin = 'extract'`), with the verbatim `quote`, the
+  `message_index` (texts, email, note paragraphs) and `due_text`, the deadline as said. `due_date` is
+  resolved from it against the moment it was said, in Ben's time zone (`server/facts/dates.ts`:
+  "Friday" said on a Tuesday is that week's Friday). Between `EXTRACT_MIN_CONFIDENCE` (0.6) and 0.75 a fact
+  still goes to Review, and so do speaker matches and project links.
+- The kind list gains `task`. Vague talk ("we should talk sometime") is excluded by the prompt.
+- **One promise, one fact.** The model sees the open items on record for the people in the
+  conversation and returns `same_as_fact_id` for a repeat; failing that, the same normalized text, or
+  close wording for the same owner, within `EXTRACT_DEDUPE_DAYS` (90), is the same fact. A repeat adds a
+  row to `fact_sources` instead of a new fact; `list_open_commitments` lists the other moments as `also_said_in`.
+- Ben is a party (created once, `external_refs.vault_owner`, with his emails) so "Ben owes this" is
+  recorded as `owner_party_id`.
+- Every kind is read: meetings, calls, voice memos, uploads, **Apple Notes** (paragraphs, no
+  transcripts row), texts and email. `EXTRACT_WORKSPACES` now defaults to `*,inbox`, because most
+  texts, email, iPhone calls and every note sit in `inbox`. personal and phalanx still need listing.
+- `interactions.facts_status` records where extraction stands (`done`, `waiting` on budget, `failed`);
+  `pipeline_status` keeps meaning "transcript ready", so a budget that runs out hides nothing.
+- Close a fact by hand with **Done** on the recording page (`PATCH /api/facts/:id`, `done` / `dropped` / `open`).
+- `EXTRACT_FACTS_MODE=review` restores the step-2 behaviour.
+
+**Backfill:** `npm run extract:backfill -- --dry-run` (counts and cost), then `--phase recent` (last 30
+days), then `--phase rest`. Rate-limited (`--rpm`, default 20), resumable, never overlaps the hourly run.
+
 ## Code map
 
 ```
 server/worker/extract.ts      prompt, schema, context block, guardrails (toProposals, dedupeProposals), the step
+server/facts/store.ts         writing facts: dedupe into fact_sources, Ben's party, closing a fact
+server/facts/dates.ts         spoken deadlines ("Friday", "end of next week") to dates
+scripts/extract-backfill.ts   npm run extract:backfill
 server/services/review.ts     APPLIERS: what approving each proposal type writes
 server/worker/report.ts       extraction counts and spend for the Pipeline page
 server/workspaces/classify.ts the workspace classifier unfiled recordings are read under
