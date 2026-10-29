@@ -3,9 +3,9 @@
 //
 //   parseTitleNames   "Tanner Durfee: AnotherStory Assessment" -> ["Tanner Durfee"]
 //                     "Allan Lajeunesse : AnotherStory Assessment" (stray space) -> ["Allan Lajeunesse"]
-//                     "LUCAS SELTZER: …" -> ["Lucas Seltzer"]; "Nathan Huff and Benjamin Strout" -> ["Nathan Huff"]
-//                     "Ben and Nea" -> ["Nea"]; "Meeting with John Tabor" -> ["John Tabor"]; "Call with Devon" -> ["Devon"]
-//   normalizeName     lowercase, accents and punctuation off, middle initials dropped ("Lucas C. Seltzer" -> "lucas seltzer")
+//                     "MARA SELBY: …" -> ["Mara Selby"]; "Nolan Hart and Benjamin Strout" -> ["Nolan Hart"]
+//                     "Ben and Noa" -> ["Noa"]; "Meeting with Jon Tavers" -> ["Jon Tavers"]; "Call with Dev" -> ["Dev"]
+//   normalizeName     lowercase, accents and punctuation off, middle initials dropped ("Mara J. Selby" -> "mara selby")
 //   nameDistance      edit distance between normalized names, for "Bejamin" vs "Benjamin" (a suggestion, never a merge)
 
 /** Ben's own names: never "the other participant". OWNER_NAME and OWNER_NAME_ALIASES extend it. */
@@ -54,7 +54,7 @@ export function normalizeName(name: string | null | undefined): string {
     .trim();
 }
 
-/** "LUCAS SELTZER" -> "Lucas Seltzer"; mixed case is kept ("McGuire", "DeShawn"). */
+/** "MARA SELBY" -> "Mara Selby"; mixed case is kept ("McGuire", "DeShawn"). */
 export function displayName(name: string): string {
   const t = name.replace(/\s+/g, " ").trim();
   if (t !== t.toUpperCase() && t !== t.toLowerCase()) return t;
@@ -88,7 +88,7 @@ export function looksLikeName(s: string): boolean {
   return words.every((w) => /^[a-z]+$/.test(w)) && !words.some((w) => ["meeting", "call", "zoom", "assessment", "story", "training", "coaching", "branding", "content", "class", "classes", "live", "planning", "prayer"].includes(w));
 }
 
-/** Words that make a contact or title a company, not a person ("Besco Steel", "Gulf Coast Millwork"). */
+/** Words that make a contact or title a company, not a person ("Brisco Steel", "Gulf Coast Millwork"). */
 const ORG_WORDS = new Set(
   "llc inc co corp company development developments architect companies group steel construction constructions builders builder building buildings homes home roofing roof plumbing electric electrical supply supplies services service solutions bank insurance realty properties property designs design studio studios millwork lumber concrete windows doors cabinets flooring hvac pools landscaping capital partners ventures holdings associates architecture architects engineering contracting contractors restoration remodeling exteriors interiors decks pharmacy drugs clinic dental medical school church university office team crew".split(" "),
 );
@@ -135,7 +135,7 @@ export interface TitleName {
 export function parseTitleNamesDetailed(title: string | null | undefined, ownerNames: string[] = DEFAULT_OWNER_NAMES): TitleName[] {
   let t = (title ?? "").replace(/\s+/g, " ").replace(/\s+([:,;])/g, "$1").trim();
   if (!t) return [];
-  // The device ingest's own titles: "Call with Devon · 2026-10-28".
+  // The device ingest's own titles: "Call with Dev · 2026-10-28".
   t = t.replace(/\s+·\s+\d{4}-\d{2}-\d{2}.*$/, "").trim();
   const candidates: Array<{ text: string; strong: boolean }> = [];
   const colon = t.match(/^([^:]{2,80}):\s*\S/);
@@ -155,7 +155,7 @@ export function parseTitleNamesDetailed(title: string | null | undefined, ownerN
   for (const c of candidates) {
     let name = c.text.replace(/^(?:mr|mrs|ms|dr)\.?\s+/i, "").replace(/[.'"!]+$/, "").trim();
     const stripped = stripTopic(name);
-    // One word left in front of a topic ("Balyeat Feasibility Study", "Danley discussion") is a project or a surname, not a person.
+    // One word left in front of a topic ("Bellamy Feasibility Study", "Dunmore discussion") is a project or a surname, not a person.
     if (stripped !== name && !stripped.includes(" ")) continue;
     name = stripped;
     if (!name || TOPIC_WORDS.has(name.split(/\s+/)[0].toLowerCase())) continue;

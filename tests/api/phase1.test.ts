@@ -169,7 +169,7 @@ beforeAll(async () => {
   ids.benjamin = await party("Benjamin Schiavi", { role: ["another_story", "prospect"] });
   ids.ryan = await party("ryan@bvmhomes.example", { emails: ["ryan@bvmhomes.example"], role: ["another_story", "prospect"] });
   await pool.query(`insert into lead_records (party_id, origin, origin_id, name, email, lead_type, workspace_id) values ($1, 'airtable_contractor_intake', 'rec1', 'Ryan Meagher', 'ryan@bvmhomes.example', 'contractor', 'another_story')`, [ids.ryan]);
-  ids.barry = await party("Barry Harwell", { role: ["another_story", "client"] });
+  ids.barry = await party("Barney Hollis", { role: ["another_story", "client"] });
   ids.dana = await party("Dana Rivers", { emails: ["dana@rivers.example"], role: ["phalanx", "investor"] });
 
   ids.z1 = await interaction({ title: "Tanner Durfee: AnotherStory Assessment", source: "zoom", kind: "meeting", at: "2026-10-27T19:31:36Z" });
@@ -183,8 +183,8 @@ beforeAll(async () => {
     JSON.stringify({ interaction_id: ids.z7, workspace_id: "another_story" }),
     ids.z7,
   ]);
-  ids.c1 = await interaction({ title: "Call with Barry Harwell · 2026-10-27", source: "iphone_call", kind: "call", workspace: "inbox", at: "2026-10-27T22:23:23Z", raw: [{ kind: "name", name: "Barry Harwell", party_id: null, identifier: null }] });
-  ids.c2 = await interaction({ title: "Call with Devon · 2026-10-28", source: "iphone_call", kind: "call", workspace: "inbox", at: "2026-10-28T19:14:54Z", raw: [{ kind: "name", name: "Devon", party_id: null, identifier: null }] });
+  ids.c1 = await interaction({ title: "Call with Barney Hollis · 2026-10-27", source: "iphone_call", kind: "call", workspace: "inbox", at: "2026-10-27T22:23:23Z", raw: [{ kind: "name", name: "Barney Hollis", party_id: null, identifier: null }] });
+  ids.c2 = await interaction({ title: "Call with Dev · 2026-10-28", source: "iphone_call", kind: "call", workspace: "inbox", at: "2026-10-28T19:14:54Z", raw: [{ kind: "name", name: "Dev", party_id: null, identifier: null }] });
 }, 180_000);
 
 afterAll(async () => {
@@ -235,7 +235,7 @@ describe("resolve step: participants and filing", () => {
     // Ben rejected this filing on Review once: the rule does not make it again.
     expect(await one(`select workspace_id from interactions where id = $1`, [ids.z7])).toMatchObject({ workspace_id: null });
     // iPhone call: contact name matched, moved out of inbox by the person's workspace.
-    expect(await participantsOf(ids.c1)).toEqual([{ name: "Barry Harwell", resolved_by: "contact" }]);
+    expect(await participantsOf(ids.c1)).toEqual([{ name: "Barney Hollis", resolved_by: "contact" }]);
     expect(await one(`select workspace_id, filed_by from interactions where id = $1`, [ids.c1])).toMatchObject({ workspace_id: "another_story", filed_by: "participants" });
     // A first name alone is never made into a person.
     expect(await participantsOf(ids.c2)).toEqual([]);

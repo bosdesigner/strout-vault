@@ -334,7 +334,7 @@ export async function resolveInteraction(db: pg.Pool | pg.PoolClient, deps: Reso
     }
     // Nothing matches: a full name becomes a new person, but only from a source that names people on
     // purpose (a contact card, Zoom, a calendar guest, a title in a "<Name>: …" shape). A first name
-    // alone ("Devon") or a name picked out of free text stays unresolved.
+    // alone ("Dev") or a name picked out of free text stays unresolved.
     if (key.split(" ").length >= 2 && ((c.via === "title" && c.strong) || c.via === "contact" || c.via === "zoom_api" || c.via === "calendar")) {
       const created = await createParty(db, c, row.id);
       index.add({ id: created.id, name: created.name });

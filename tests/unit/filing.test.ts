@@ -10,31 +10,31 @@ describe("parseTitleNames", () => {
     expect(parseTitleNames("Tanner Durfee: AnotherStory Assessment")).toEqual(["Tanner Durfee"]);
     expect(parseTitleNames("Ryan Meagher: AnotherStory Assessment")).toEqual(["Ryan Meagher"]);
     expect(parseTitleNames("Allan Lajeunesse : AnotherStory Assessment")).toEqual(["Allan Lajeunesse"]);
-    expect(parseTitleNames("LUCAS SELTZER: AnotherStory Assessment")).toEqual(["Lucas Seltzer"]);
-    expect(parseTitleNames("Jarett B: AnotherStory Assessment")).toEqual(["Jarett B"]);
+    expect(parseTitleNames("MARA SELBY: AnotherStory Assessment")).toEqual(["Mara Selby"]);
+    expect(parseTitleNames("Jaret K: AnotherStory Assessment")).toEqual(["Jaret K"]);
     expect(parseTitleNames("Bejamin Schiavi: AnotherStory Assessment")).toEqual(["Bejamin Schiavi"]);
   });
 
   it("leaves Ben out and reads the other shapes Ben's calendar produces", () => {
-    expect(parseTitleNames("Nathan Zachary Huff and Benjamin Strout")).toEqual(["Nathan Zachary Huff"]);
-    expect(parseTitleNames("Daniel Hardwick  and Benjamin Strout")).toEqual(["Daniel Hardwick"]);
-    expect(parseTitleNames("David Balderston and Ben Strout alignment ")).toEqual(["David Balderston"]);
-    expect(parseTitleNames("Ben and Nea")).toEqual(["Nea"]);
-    expect(parseTitleNames("Ben and Laura Bertram ")).toEqual(["Laura Bertram"]);
-    expect(parseTitleNames("Ben and Nea about Payne ")).toEqual(["Nea"]);
-    expect(parseTitleNames("Ben and Jeremy about Claudio")).toEqual(["Jeremy"]);
-    expect(parseTitleNames("Meeting with John Tabor")).toEqual(["John Tabor"]);
-    expect(parseTitleNames("Meeting with Kenneth, Daryl, Shawn, and Ian of the CQC Home Team ")).toEqual(["Kenneth", "Daryl", "Shawn"]);
-    expect(parseTitleNames("Intro call with Ben and Marianne")).toEqual(["Marianne"]);
-    expect(parseTitleNames("Call with Barry Harwell · 2026-10-27")).toEqual(["Barry Harwell"]);
-    expect(parseTitleNames("Naaim Masri")).toEqual(["Naaim Masri"]);
+    expect(parseTitleNames("Nolan Zane Hart and Benjamin Strout")).toEqual(["Nolan Zane Hart"]);
+    expect(parseTitleNames("Derek Holloway  and Benjamin Strout")).toEqual(["Derek Holloway"]);
+    expect(parseTitleNames("Dana Bellweather and Ben Strout alignment ")).toEqual(["Dana Bellweather"]);
+    expect(parseTitleNames("Ben and Noa")).toEqual(["Noa"]);
+    expect(parseTitleNames("Ben and Lena Bartow ")).toEqual(["Lena Bartow"]);
+    expect(parseTitleNames("Ben and Noa about Payne ")).toEqual(["Noa"]);
+    expect(parseTitleNames("Ben and Jared about Corwin")).toEqual(["Jared"]);
+    expect(parseTitleNames("Meeting with Jon Tavers")).toEqual(["Jon Tavers"]);
+    expect(parseTitleNames("Meeting with Kurt, Dale, Sean, and Ivo of the QRS Home Team ")).toEqual(["Kurt", "Dale", "Sean"]);
+    expect(parseTitleNames("Intro call with Ben and Mirabel")).toEqual(["Mirabel"]);
+    expect(parseTitleNames("Call with Barney Hollis · 2026-10-27")).toEqual(["Barney Hollis"]);
+    expect(parseTitleNames("Nadim Marsh")).toEqual(["Nadim Marsh"]);
     // A company in the phone's contacts is not a person.
-    expect(parseTitleNames("Call with Besco Steel · 2024-12-02")).toEqual([]);
+    expect(parseTitleNames("Call with Brisco Steel · 2024-12-02")).toEqual([]);
     expect(parseTitleNames("Call with Gulf Coast Millwork")).toEqual([]);
   });
 
   it("finds no one in account-default and topic titles", () => {
-    for (const t of ["Ben Strout's Zoom Meeting", "Another Story's Zoom Meeting", "Call Recording", "Executive Meeting - Monday Planning & Prayer", "Weekly Q&A Classes - Drawing Before and After Home Design in Real Time!", "TikTok live ", "Road map Zoom call", "team meeting ", "Kitchen walkthrough", "Pinson site walk", "", null]) {
+    for (const t of ["Ben Strout's Zoom Meeting", "Another Story's Zoom Meeting", "Call Recording", "Leadership Meeting - Monday Planning", "Weekly Q&A Classes - Home Design Live!", "TikTok live ", "Roadmap Zoom call", "team meeting ", "Kitchen walkthrough", "Pell site walk", "", null]) {
       expect(parseTitleNames(t as string | null)).toEqual([]);
     }
   });
@@ -43,43 +43,43 @@ describe("parseTitleNames", () => {
 describe("titles from the production backlog (2026-10-29 dry run)", () => {
   it("names a person firmly only in a deliberate shape; free text only ever matches someone known", () => {
     expect(parseTitleNamesDetailed("Tanner Durfee: AnotherStory Assessment")).toEqual([{ name: "Tanner Durfee", strong: true }]);
-    expect(parseTitleNamesDetailed("Amber Autumn, Feasibility Study Discovery Call is Confirmed!")).toEqual([{ name: "Amber Autumn", strong: true }]);
-    expect(parseTitleNamesDetailed("Meeting with John Tabor")).toEqual([{ name: "John Tabor", strong: true }]);
-    expect(parseTitleNamesDetailed("Daniel Hardwick  and Benjamin Strout")).toEqual([{ name: "Daniel Hardwick", strong: false }]);
-    expect(parseTitleNamesDetailed("Andrew Thomson Feasibility Study Onboarding Meeting")).toEqual([{ name: "Andrew Thomson", strong: false }]);
+    expect(parseTitleNamesDetailed("Amber Ashby, Feasibility Study Discovery Call is Confirmed!")).toEqual([{ name: "Amber Ashby", strong: true }]);
+    expect(parseTitleNamesDetailed("Meeting with Jon Tavers")).toEqual([{ name: "Jon Tavers", strong: true }]);
+    expect(parseTitleNamesDetailed("Derek Holloway  and Benjamin Strout")).toEqual([{ name: "Derek Holloway", strong: false }]);
+    expect(parseTitleNamesDetailed("Andy Thorne Feasibility Study Onboarding Meeting")).toEqual([{ name: "Andy Thorne", strong: false }]);
   });
 
   it("drops topics, possessives of Ben, run-together names and one-word projects", () => {
     for (const t of [
-      "Ben Strout's with the Nolen's",
+      "Ben Strout's with the Nashes",
       "Ben Strout's VA Interview",
-      "Call with Dust Development",
-      "Balyeat Feasibility Study Delivery",
-      "Danley discussion",
-      "Bratcher Review",
-      "Review Schilleci Feasibility Study",
+      "Call with Drift Development",
+      "Bellamy Feasibility Study Delivery",
+      "Dunmore discussion",
+      "Brandt Review",
+      "Review Sorrell Feasibility Study",
       "Next Steps",
       "AnotherStory Intake",
-      "Call with Dust Development",
-      "Greensport Baptist Church review",
+      "Call with Drift Development",
+      "Greenport Baptist Church review",
       "Ask an architect: 30 min discovery ",
     ]) {
       expect(parseTitleNames(t), t).toEqual([]);
     }
     expect(parseTitleNames("Tanner Durfee Next Steps: pricing")).toEqual(["Tanner Durfee"]);
     // Only "John" survives, as a weak one-word name, which the resolver never links (tests/api/phase1.test.ts).
-    expect(parseTitleNamesDetailed("Brad Jeremy Ben and John ")).toEqual([{ name: "John", strong: false }]);
+    expect(parseTitleNamesDetailed("Bram Jory Ben and John ")).toEqual([{ name: "John", strong: false }]);
     // Free text can still yield a weak two-word name; it is only ever matched, never created.
-    expect(parseTitleNamesDetailed("Claudio Jeremy and Ben ")).toEqual([{ name: "Claudio Jeremy", strong: false }]);
+    expect(parseTitleNamesDetailed("Corwin Jory and Ben ")).toEqual([{ name: "Corwin Jory", strong: false }]);
     expect(isOwnerName("Ben Strout's")).toBe(true);
   });
 });
 
 describe("names", () => {
   it("normalizes case, accents, punctuation and middle initials", () => {
-    expect(normalizeName("Lucas C Seltzer")).toBe("lucas seltzer");
+    expect(normalizeName("Mara J Selby")).toBe("mara selby");
     expect(normalizeName("  José  O'Neil ")).toBe("jose oneil");
-    expect(displayName("LUCAS SELTZER")).toBe("Lucas Seltzer");
+    expect(displayName("MARA SELBY")).toBe("Mara Selby");
     expect(displayName("Kevin McGuire")).toBe("Kevin McGuire");
   });
 
@@ -91,7 +91,7 @@ describe("names", () => {
 
   it("treats a typo as a fuzzy match (a suggestion) but never an exact one or a different person", () => {
     expect(isFuzzyNameMatch("Bejamin Schiavi", "Benjamin Schiavi")).toBe(true);
-    expect(isFuzzyNameMatch("Jon Brou", "Jonathan Brou")).toBe(true);
+    expect(isFuzzyNameMatch("Jon Bray", "Jonathan Bray")).toBe(true);
     expect(isFuzzyNameMatch("Tanner Durfee", "Tanner Durfee")).toBe(false);
     expect(isFuzzyNameMatch("Ryan Meagher", "Ryan Mahoney")).toBe(false);
     expect(isFuzzyNameMatch("Tanner Durfee", "Tanner Smith")).toBe(false);
@@ -110,7 +110,7 @@ describe("filing rules", () => {
     expect(ws("Discovery call: 12 Oak St")).toBe("another_story");
     expect(ws("Contractor onboarding")).toBe("another_story");
     expect(ws("Ben Strout's Zoom Meeting")).toBeNull();
-    expect(ws("Ben and Nea")).toBeNull();
+    expect(ws("Ben and Noa")).toBeNull();
     expect(ws("")).toBeNull();
   });
 
