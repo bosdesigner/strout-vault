@@ -1,4 +1,5 @@
 import type pg from "pg";
+import { z } from "zod";
 import { PROPOSAL_SCHEMAS, type ProposalType } from "../mcp/tools/propose.ts";
 
 export interface ReviewItem {
@@ -126,6 +127,9 @@ export async function decideReview(pool: pg.Pool, id: number, decision: "approve
           );
           applied.push(`segments.speaker_party_id (${res.rowCount ?? 0} lines)`);
         }
+      } else if (row.item_type in FOLLOWTHROUGH_APPLIERS) {
+        // The follow-through step's proposals (Jarvis step 5 C).
+        applied.push(...(await FOLLOWTHROUGH_APPLIERS[row.item_type](client, proposal, row)));
       } else if (row.item_type in APPLIERS) {
         // The propose_update tool's types (MCP agents) and the extraction step's proposals.
         applied.push(...(await APPLIERS[row.item_type as ProposalType](client, proposal, row)));
@@ -374,3 +378,46 @@ const APPLIERS: Record<ProposalType, Applier> = {
     return [`relationships #${ins.rows[0].id}`];
   },
 };
+
+// ---- Follow-through (Jarvis step 5 C, docs/FOLLOW-THROUGH.md) ----
+
+const DraftShape = z.object({ channel: z.enum(["email", "text"]), to: z.string().min(1), subject: z.string().nullable().optional(), body: z.string().min(1) });
+const FactStatusShape = z.object({ fact_id: z.coerce.number().int().positive(), status: z.enum(["done", "dropped"]), interaction_id: z.coerce.number().int().positive().optional() });
+
+/**
+ * fact_status closes the commitment (status done or dropped, when, and the conversation that showed it).
+ * reply_needed and nudge change no record: approving means Ben is handling it (he sends the draft
+ * himself; step D turns approval into a Gmail draft). Rejecting any of them just closes the item.
+ */
+const FOLLOWTHROUGH_APPLIERS: Record<string, Applier> = {
+  async fact_status(db, raw) {
+    const parsed = FactStatusShape.safeParse(raw);
+    if (!parsed.success) throw new ReviewError(400, "proposal no longer matches the fact_status shape");
+    const p = parsed.data;
+    const { rows } = await db.query<{ status: string }>(`select status from facts where id = $1 for update`, [p.fact_id]);
+    if (!rows[0]) throw new ReviewError(400, `unknown fact ${p.fact_id}`);
+    if (rows[0].status !== "open") throw new ReviewError(400, `fact ${p.fact_id} is already ${rows[0].status}`);
+    await db.query(`update facts set status = $2, closed_at = now(), closed_by_interaction_id = $3 where id = $1`, [p.fact_id, p.status, p.interaction_id ?? null]);
+    return [`facts #${p.fact_id} ${p.status}`];
+  },
+  async reply_needed() {
+    return ["handled (send the draft yourself)"];
+  },
+  async nudge() {
+    return ["handled (send the draft yourself)"];
+  },
+};
+
+/** Edits the draft on an open reply_needed or nudge item; the edited text is what Ben (or step D) sends. */
+export async function updateDraft(pool: pg.Pool, id: number, edit: { subject?: string | null; body: string }): Promise<ReviewItem> {
+  const { rows } = await pool.query(`select item_type, status, proposal from review_queue where id = $1`, [id]);
+  const row = rows[0];
+  if (!row) throw new ReviewError(404, "review item not found");
+  if (row.status !== "open") throw new ReviewError(409, `already ${row.status}`);
+  const draft = (row.proposal as Record<string, unknown>).draft;
+  const current = DraftShape.safeParse(draft);
+  if (!current.success) throw new ReviewError(400, "this item has no draft to edit");
+  const next = { ...current.data, body: edit.body, ...(edit.subject !== undefined && current.data.channel === "email" ? { subject: edit.subject } : {}), edited: true };
+  await pool.query(`update review_queue set proposal = jsonb_set(proposal, '{draft}', $2::jsonb) where id = $1`, [id, JSON.stringify(next)]);
+  return (await listReviewById(pool, id))!;
+}

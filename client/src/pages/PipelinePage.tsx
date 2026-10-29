@@ -39,8 +39,8 @@ interface Overview {
     queue: { queued: number; transcribing: number; failed: number; ready: number };
     downloads: { pending: number; failed: number };
     missingOffsite: { total: number; items: Array<{ id: number; title: string | null; occurredAt: string | null; source: string | null }> };
-    spend: { month: string; groqUsd: number; extractUsd?: number };
-    extraction?: { unread: number; read: number; failed: number; openProposals: number };
+    spend: { month: string; groqUsd: number; extractUsd?: number; followthroughUsd?: number };
+    extraction?: { unread: number; read: number; failed: number; openProposals: number; threads?: number };
   };
   lastRuns: Run[];
   failed: Item[];
@@ -58,6 +58,9 @@ interface Overview {
     extractModel?: string;
     extractBudgetUsd?: number;
     extractWorkspaces?: string;
+    followthroughConfigured?: boolean;
+    followthroughModel?: string;
+    followthroughBudgetUsd?: number;
   };
   state: { zoomCursor: string | null; lastRun: { id: number; ok: boolean; finishedAt: string } | null };
   embeddings: {
@@ -190,6 +193,7 @@ export default function PipelinePage() {
             <p className="text-lg font-medium" data-testid="extraction-counts">
               {d.report.extraction.read} read · {d.report.extraction.unread} waiting
             </p>
+            {!!d.report.extraction.threads && <p className="text-xs text-muted-foreground">{d.report.extraction.threads} text and email thread(s) read</p>}
             <p className="text-xs text-muted-foreground">
               {d.report.extraction.failed} failed · <Link to="/review" className="underline">{d.report.extraction.openProposals} proposal(s) to review</Link>
             </p>
@@ -201,6 +205,16 @@ export default function PipelinePage() {
                 : "off: set EXTRACT_MONTHLY_BUDGET_USD on the worker"}
             </p>
             <p className="text-xs text-muted-foreground">Claude reads each filed recording once ({d.config.extractWorkspaces === "*" || !d.config.extractWorkspaces ? "every workspace but phalanx" : d.config.extractWorkspaces}) and queues facts, speaker matches and project links here for review.</p>
+          </Card>
+          <Card title="Follow-through">
+            <p className="text-sm" data-testid="followthrough-settings">
+              {d.config.followthroughConfigured
+                ? `${d.config.followthroughModel} · $${(d.report.spend.followthroughUsd ?? 0).toFixed(2)} of $${(d.config.followthroughBudgetUsd ?? 0).toFixed(2)} this month`
+                : "off: set FOLLOWTHROUGH_MONTHLY_BUDGET_USD on the worker"}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Replies waiting on you, nudges and kept commitments, each with a drafted message, on <Link to="/review" className="underline">Review → Today</Link>. Nothing is sent.
+            </p>
           </Card>
         </section>
       )}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ClipboardCheck, ExternalLink, X } from "lucide-react";
+import { Check, ClipboardCheck, Copy, ExternalLink, X } from "lucide-react";
 import { api } from "@/lib/api";
 import type { ReviewItem } from "@shared/types";
 import { useWorkspace } from "@/lib/workspace";
@@ -9,10 +9,17 @@ import { formatDate, formatTimestamp } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
 
-type Filter = "open" | "all";
+type Filter = "today" | "open" | "all";
+
+/** The follow-through step's items (Jarvis step 5 C): what Ben has to act on, in the order he should see it. */
+const TODAY_TYPES = ["reply_needed", "nudge", "fact_status"];
+
+type Draft = { channel: "email" | "text"; to: string; subject?: string | null; body: string; edited?: boolean };
 
 export default function ReviewPage() {
   const { param, current } = useWorkspace();
@@ -25,18 +32,25 @@ export default function ReviewPage() {
     document.title = "Review queue · Strout Vault";
   }, []);
 
+  // Today is the open queue narrowed to replies, nudges and done-checks.
+  const status = filter === "today" ? "open" : filter;
   const queue = useQuery({
-    queryKey: ["review", filter, param],
-    queryFn: () => api<{ items: ReviewItem[]; openCount: number }>(`/review?status=${filter}${param}`),
+    queryKey: ["review", status, param],
+    queryFn: () => api<{ items: ReviewItem[]; openCount: number }>(`/review?status=${status}${param}`),
     placeholderData: (prev) => prev,
   });
-  const items = queue.data?.items ?? [];
+  const all = queue.data?.items ?? [];
+  const todayCount = all.filter((i) => i.status === "open" && TODAY_TYPES.includes(i.itemType)).length;
+  const items =
+    filter === "today"
+      ? all.filter((i) => TODAY_TYPES.includes(i.itemType)).sort((a, b) => TODAY_TYPES.indexOf(a.itemType) - TODAY_TYPES.indexOf(b.itemType) || a.id - b.id)
+      : all;
   const decide = useMutation({
     mutationFn: ({ id, decision }: { id: number; decision: "approve" | "reject" }) => api<{ item: ReviewItem; applied: string[] }>(`/review/${id}/decide`, { method: "POST", json: { decision } }),
     onSuccess: ({ item }) => {
-      qc.setQueryData<{ items: ReviewItem[]; openCount: number }>(["review", filter, param], (old) => {
+      qc.setQueryData<{ items: ReviewItem[]; openCount: number }>(["review", status, param], (old) => {
         if (!old) return old;
-        const next = filter === "open" ? old.items.filter((i) => i.id !== item.id) : old.items.map((i) => (i.id === item.id ? item : i));
+        const next = status === "open" ? old.items.filter((i) => i.id !== item.id) : old.items.map((i) => (i.id === item.id ? item : i));
         return { items: next, openCount: Math.max(0, old.openCount - 1) };
       });
       void qc.invalidateQueries({ queryKey: ["review-count"] });
@@ -122,9 +136,9 @@ export default function ReviewPage() {
           </Button>
         )}
         <div className="inline-flex rounded-lg bg-muted p-1 text-sm" role="tablist" aria-label="Show">
-          {(["open", "all"] as Filter[]).map((f) => (
-            <button key={f} role="tab" aria-selected={filter === f} type="button" onClick={() => setFilter(f)} className={cn("rounded-md px-3 py-1 capitalize", filter === f && "bg-background shadow-sm")}>
-              {f === "open" ? `Open${queue.data ? ` (${queue.data.openCount})` : ""}` : "All"}
+          {(["today", "open", "all"] as Filter[]).map((f) => (
+            <button key={f} role="tab" aria-selected={filter === f} type="button" data-testid={`review-tab-${f}`} onClick={() => setFilter(f)} className={cn("rounded-md px-3 py-1 capitalize", filter === f && "bg-background shadow-sm")}>
+              {f === "open" ? `Open${queue.data ? ` (${queue.data.openCount})` : ""}` : f === "today" ? `Today${queue.data && status === "open" ? ` (${todayCount})` : ""}` : "All"}
             </button>
           ))}
         </div>
@@ -139,8 +153,12 @@ export default function ReviewPage() {
       ) : queue.isError ? (
         <EmptyState title="Could not load the queue">{(queue.error as Error).message}</EmptyState>
       ) : items.length === 0 ? (
-        <EmptyState icon={<ClipboardCheck />} title={filter === "open" ? "Nothing to review" : "No proposals yet"}>
-          {filter === "open" ? "New proposals appear here after each recording is processed." : "The pipeline has not proposed anything for this workspace."}
+        <EmptyState icon={<ClipboardCheck />} title={filter === "all" ? "No proposals yet" : filter === "today" ? "Nothing waiting on you" : "Nothing to review"}>
+          {filter === "today"
+            ? "Replies to send, nudges and kept commitments appear here once the follow-through step runs."
+            : filter === "open"
+              ? "New proposals appear here after each recording is processed."
+              : "The pipeline has not proposed anything for this workspace."}
         </EmptyState>
       ) : (
         <ol ref={listRef} className="space-y-2" aria-label="Proposals" data-testid="review-list">
@@ -183,8 +201,9 @@ export default function ReviewPage() {
                     <Link to={`/projects/${it.project.id}`} className="hover:underline underline-offset-2">{it.project.name}</Link>
                   )}
                   {it.speakerLabel && <span>label: {it.speakerLabel}</span>}
-                  {it.proposal.source === "extract" && <span>found by Claude</span>}
+                  {(it.proposal.source === "extract" || it.proposal.source === "followthrough") && <span>found by Claude</span>}
                 </div>
+                {isDraft(it.proposal.draft) && <DraftBox item={it} draft={it.proposal.draft} />}
                 {open && (
                   <div className="mt-3 flex gap-2">
                     <Button size="sm" onClick={(e) => { e.stopPropagation(); setSelected(i); decide.mutate({ id: it.id, decision: "approve" }); }} disabled={decide.isPending} data-testid="review-approve">
@@ -204,9 +223,61 @@ export default function ReviewPage() {
   );
 }
 
-/** Agent and extraction proposals lead with the change; their reason (the quote, the evidence) goes underneath. */
+/** Agent, extraction and follow-through proposals lead with the change; their reason (the quote, the evidence) goes underneath. */
 function leadsWithChange(it: ReviewItem): boolean {
-  return ["new_fact", "new_party", "party_edit", "link_party_interaction", "link_project_interaction", "new_relationship"].includes(it.itemType);
+  return ["new_fact", "new_party", "party_edit", "link_party_interaction", "link_project_interaction", "new_relationship", ...TODAY_TYPES].includes(it.itemType);
+}
+
+function isDraft(d: unknown): d is Draft {
+  return !!d && typeof d === "object" && typeof (d as Draft).body === "string" && typeof (d as Draft).to === "string";
+}
+
+/**
+ * The drafted reply on a follow-through item. Ben edits it here (saved when the field loses focus)
+ * and copies it into Gmail or Messages; nothing is sent from the vault.
+ */
+function DraftBox({ item, draft }: { item: ReviewItem; draft: Draft }) {
+  const qc = useQueryClient();
+  const open = item.status === "open";
+  const [subject, setSubject] = useState(draft.subject ?? "");
+  const [body, setBody] = useState(draft.body);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    setSubject(draft.subject ?? "");
+    setBody(draft.body);
+  }, [draft.subject, draft.body]);
+  const save = useMutation({
+    mutationFn: () => api<{ item: ReviewItem }>(`/review/${item.id}/draft`, { method: "PATCH", json: { body, ...(draft.channel === "email" ? { subject } : {}) } }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["review"] }),
+  });
+  const dirty = body !== draft.body || (draft.channel === "email" && subject !== (draft.subject ?? ""));
+  const saveIfChanged = () => {
+    if (open && dirty && body.trim()) save.mutate();
+  };
+  const copy = async () => {
+    await navigator.clipboard.writeText(draft.channel === "email" && subject ? `Subject: ${subject}\n\n${body}` : body);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <div className="mt-3 rounded-md border bg-muted/40 p-3" data-testid="review-draft" onClick={(e) => e.stopPropagation()}>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>
+          Draft {draft.channel === "email" ? "email" : "text"} to <span className="font-medium text-foreground">{draft.to}</span>
+          {draft.edited && " · edited"}
+          {save.isPending && " · saving…"}
+          {save.isError && <span className="text-destructive"> · could not save</span>}
+        </span>
+        <Button size="sm" variant="outline" type="button" onClick={() => void copy()} data-testid="review-draft-copy">
+          <Copy className="h-3.5 w-3.5" /> {copied ? "Copied" : "Copy"}
+        </Button>
+      </div>
+      {draft.channel === "email" && (
+        <Input aria-label="Subject" className="mb-2 h-8 bg-background" value={subject} disabled={!open} onChange={(e) => setSubject(e.target.value)} onBlur={saveIfChanged} />
+      )}
+      <Textarea aria-label="Draft" rows={Math.min(16, Math.max(3, body.split("\n").length + 1))} className="min-h-0 bg-background" value={body} disabled={!open} onChange={(e) => setBody(e.target.value)} onBlur={saveIfChanged} data-testid="review-draft-body" />
+    </div>
+  );
 }
 
 function describe(it: ReviewItem): string {
@@ -225,6 +296,14 @@ function describe(it: ReviewItem): string {
   if (it.itemType === "link_party_interaction" && it.party) return `Tag ${it.party.name} on this recording${it.speakerLabel ? ` as ${it.speakerLabel}` : ""}${who}`;
   if (it.itemType === "new_relationship") return `New relationship: #${String(p.from_party_id)} ${String(p.kind)} #${String(p.to_party_id)}${who}`;
   if (it.itemType === "workspace_assignment") return p.workspace_id ? `File this thread under ${String(p.workspace_id)}` : "Choose a workspace for this thread";
+  if (it.itemType === "reply_needed") return p.no_reply_needed ? `No reply needed${it.party ? ` to ${it.party.name}` : ""}` : `Reply to ${it.party?.name ?? "this message"}`;
+  if (it.itemType === "nudge") {
+    const who = it.party?.name ?? "them";
+    if (p.reason === "quiet") return `Check in with ${who}: no answer to your last message`;
+    const what = typeof p.fact_text === "string" ? p.fact_text : "a commitment";
+    return `${p.reason === "overdue" ? `Overdue${typeof p.due_date === "string" ? ` (due ${p.due_date})` : ""}` : "Still open"}: ${what}`;
+  }
+  if (it.itemType === "fact_status") return `Done? ${typeof p.fact_text === "string" ? p.fact_text : `commitment #${String(p.fact_id)}`}`;
   if (it.itemType === "interaction_workspace") return `File under ${String(p.workspace_id)}${typeof p.confidence === "number" ? ` (${Math.round(p.confidence * 100)}% sure)` : ""}`;
   return `${it.itemType.replace(/_/g, " ")} proposal${who}`;
 }

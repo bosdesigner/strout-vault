@@ -46,7 +46,7 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 export const toPgRegex = (re: RegExp) => re.source.replace(/\\b/g, "\\y");
 
 /** Signals for every recording without a workspace: title, keyword counts (one query over segments), people in the title. */
-export async function collectSignals(pool: pg.Pool, opts: { limit?: number } = {}): Promise<{ signals: RecordingSignals[]; openProposals: Set<number> }> {
+export async function collectSignals(pool: pg.Pool, opts: { limit?: number; unextracted?: boolean } = {}): Promise<{ signals: RecordingSignals[]; openProposals: Set<number> }> {
   const rules = WORKSPACE_RULES;
   // One parameter per transcript pattern, translated from JS regex syntax to Postgres ARE
   // (word boundaries are \y there, not \b). Counted with ~* so case never matters.
@@ -66,6 +66,7 @@ export async function collectSignals(pool: pg.Pool, opts: { limit?: number } = {
        from interactions i
        left join lateral (select ${counts.join(", ")} from segments s where s.interaction_id = i.id) h on true
       where i.workspace_id is null
+        ${opts.unextracted ? "and i.extracted_at is null and exists (select 1 from segments s where s.interaction_id = i.id)" : ""}
       order by i.occurred_at desc nulls last, i.id desc ${opts.limit ? `limit ${Math.max(1, Math.floor(opts.limit))}` : ""}`,
     flatParams,
   );

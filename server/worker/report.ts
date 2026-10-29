@@ -4,19 +4,20 @@
 import type pg from "pg";
 import { monthToDateSpend } from "./budget.ts";
 import { EXTRACT_PROVIDER } from "./extract.ts";
+import { FOLLOWTHROUGH_PROVIDER } from "./followthrough.ts";
 
 export interface PipelineReport {
   queue: { queued: number; transcribing: number; failed: number; ready: number };
   downloads: { pending: number; failed: number };
   missingOffsite: { total: number; items: Array<{ id: number; title: string | null; occurredAt: string | null; source: string | null }> };
-  spend: { month: string; groqUsd: number; anthropicUsd?: number; extractUsd?: number };
+  spend: { month: string; groqUsd: number; anthropicUsd?: number; extractUsd?: number; followthroughUsd?: number };
   /** Jarvis step 2. Absent when migration 0007 has not been applied yet. */
-  extraction?: { unread: number; read: number; failed: number; openProposals: number };
+  extraction?: { unread: number; read: number; failed: number; openProposals: number; threads?: number };
   clips?: { toReview: number; approved: number; cut: number; renderFailed: number; unscouted: number };
 }
 
 export async function buildReport(pool: pg.Pool, now: Date): Promise<PipelineReport> {
-  const [queue, downloads, missing, missingCount, groq, anthropic, extractUsd, extraction, clips, unscouted] = await Promise.all([
+  const [queue, downloads, missing, missingCount, groq, anthropic, extractUsd, followthroughUsd, extraction, clips, unscouted] = await Promise.all([
     pool.query(
       `select coalesce(pipeline_status, 'ready') as s, count(*)::int as n from interactions group by 1`,
     ),
@@ -37,6 +38,7 @@ export async function buildReport(pool: pg.Pool, now: Date): Promise<PipelineRep
     monthToDateSpend(pool, "groq", now),
     monthToDateSpend(pool, "anthropic", now),
     monthToDateSpend(pool, EXTRACT_PROVIDER, now),
+    monthToDateSpend(pool, FOLLOWTHROUGH_PROVIDER, now),
     extractionCounts(pool),
     pool.query(
       `select status, count(*)::int as n, count(*) filter (where status = 'approved' and render_attempts >= 3)::int as exhausted from clip_candidates group by status`,
@@ -75,13 +77,13 @@ export async function buildReport(pool: pg.Pool, now: Date): Promise<PipelineRep
         source: r.source,
       })),
     },
-    spend: { month: `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`, groqUsd: groq, anthropicUsd: anthropic, extractUsd },
+    spend: { month: `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`, groqUsd: groq, anthropicUsd: anthropic, extractUsd, followthroughUsd },
     ...(extraction ? { extraction } : {}),
     clips: clipCounts,
   };
 }
 
-/** Filed recordings read or waiting for extraction, and the review items it queued that are still open. */
+/** Filed recordings read or waiting for extraction, threads read, and the review items it queued that are still open. */
 async function extractionCounts(pool: pg.Pool): Promise<PipelineReport["extraction"] | null> {
   try {
     const { rows } = await pool.query(
@@ -91,7 +93,12 @@ async function extractionCounts(pool: pg.Pool): Promise<PipelineReport["extracti
               (select count(*)::int from review_queue where status = 'open' and proposal->>'source' = 'extract') as open_proposals
          from interactions i where i.workspace_id is not null and exists (select 1 from transcripts t where t.interaction_id = i.id)`,
     );
-    return { unread: rows[0].unread, read: rows[0].read, failed: rows[0].failed, openProposals: rows[0].open_proposals };
+    // Texts and email read (step 5 B); 0011 adds the column, so an older database reports none.
+    const threads = await pool
+      .query(`select count(*)::int as n from interactions where kind in ('text_thread', 'email_thread') and extracted_through_idx is not null`)
+      .then((r) => r.rows[0].n as number)
+      .catch((err) => ((err as { code?: string }).code === "42703" ? 0 : Promise.reject(err)));
+    return { unread: rows[0].unread, read: rows[0].read, failed: rows[0].failed, openProposals: rows[0].open_proposals, threads };
   } catch (err) {
     if ((err as { code?: string }).code === "42703") return null; // undefined column: 0007 not applied yet
     throw err;

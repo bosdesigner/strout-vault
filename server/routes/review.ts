@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import type { AppContext } from "../context.ts";
-import { countOpenReview, decideReview, decideReviewBulk, listReview, ReviewError } from "../services/review.ts";
+import { countOpenReview, decideReview, decideReviewBulk, listReview, ReviewError, updateDraft } from "../services/review.ts";
 import { intId, parse, wrap } from "./util.ts";
 import { refileAfterChange } from "../workspaces/refileHook.ts";
 
@@ -46,6 +46,23 @@ export function reviewRouter(ctx: AppContext): Router {
         const out = await decideReview(ctx.pool, id, decision);
         const refiled = decision === "approve" && REFILE_AFTER.has(out.item.itemType) ? await refileAfterChange(ctx) : null;
         res.json({ ...out, refiled });
+      } catch (err) {
+        if (err instanceof ReviewError) {
+          res.status(err.status).json({ error: err.message });
+          return;
+        }
+        throw err;
+      }
+    }),
+  );
+  // Edit the drafted reply on a follow-through item before sending it.
+  r.patch(
+    "/:id/draft",
+    wrap(async (req, res) => {
+      const id = intId(req.params.id);
+      const body = parse(z.object({ subject: z.string().max(300).nullable().optional(), body: z.string().min(1).max(20000) }), req.body);
+      try {
+        res.json({ item: await updateDraft(ctx.pool, id, body) });
       } catch (err) {
         if (err instanceof ReviewError) {
           res.status(err.status).json({ error: err.message });

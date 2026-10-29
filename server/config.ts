@@ -82,10 +82,36 @@ const envSchema = z.object({
   EXTRACT_MODEL: z.string().default("claude-opus-5-5"),
   EXTRACT_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("medium"),
   EXTRACT_MONTHLY_BUDGET_USD: z.coerce.number().min(0).default(0),
-  // Workspaces whose recordings are read. "*" is every workspace except phalanx (investor
-  // material), which is only read when listed: "*,phalanx". Unfiled recordings are never read.
+  // Workspaces whose recordings and threads are read. "*" is every workspace except phalanx
+  // (investor material), personal and inbox; phalanx is only read when listed: "*,phalanx".
   EXTRACT_WORKSPACES: z.string().default("*"),
   EXTRACT_MAX_PER_RUN: z.coerce.number().int().positive().default(20),
+  // Texts and email (Jarvis step 5 B, docs/FOLLOW-THROUGH.md): threads with a message in the last
+  // N days are read, and read again when they gain messages (only the new ones are sent). 0 = off.
+  EXTRACT_THREAD_DAYS: z.coerce.number().int().min(0).default(30),
+  EXTRACT_THREADS_PER_RUN: z.coerce.number().int().positive().default(50),
+  // Unfiled recordings the workspace classifier files at 0.85+ (a title rule such as "AnotherStory
+  // Assessment", or a known person in the title) are read under that workspace, and the filing is
+  // queued for review. Never phalanx unless EXTRACT_WORKSPACES lists it. "0" = unfiled never read.
+  EXTRACT_UNFILED: z.enum(["0", "1"]).default("1"),
+  // ---- Follow-through (Jarvis step 5 C, docs/FOLLOW-THROUGH.md) ----
+  // Notices commitments that were kept, overdue or stale, messages waiting on Ben's reply and
+  // leads or clients gone quiet, and queues each on Review with a drafted reply. Nothing is sent.
+  // Claude decides "was it kept?" and writes the drafts; its own budget (spend_ledger provider
+  // "anthropic-followthrough"); 0 = off (the step only counts what it would look at).
+  FOLLOWTHROUGH_MONTHLY_BUDGET_USD: z.coerce.number().min(0).default(0),
+  FOLLOWTHROUGH_MODEL: z.string().default("claude-opus-5-5"),
+  FOLLOWTHROUGH_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("medium"),
+  // Claude calls per hourly run (a done-check or a draft each).
+  FOLLOWTHROUGH_MAX_PER_RUN: z.coerce.number().int().positive().default(20),
+  // An inbound message from a known person with no reply after this many weekday hours is "waiting on you".
+  FOLLOWTHROUGH_REPLY_HOURS: z.coerce.number().min(1).default(24),
+  // A commitment with no due date and no contact since is nudged after this many weekdays.
+  FOLLOWTHROUGH_NUDGE_DAYS: z.coerce.number().int().min(1).default(5),
+  // An open lead or active client whose last message is Ben's, unanswered for this many days, has "gone quiet".
+  FOLLOWTHROUGH_QUIET_DAYS: z.coerce.number().int().min(1).default(7),
+  // Only messages from the last N days count (older silence is not a follow-up anymore).
+  FOLLOWTHROUGH_LOOKBACK_DAYS: z.coerce.number().int().min(1).default(30),
   // Proposals below this confidence are dropped rather than queued.
   EXTRACT_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.6),
   // ---- Leads (Jarvis step 3, docs/LEADS.md) ----

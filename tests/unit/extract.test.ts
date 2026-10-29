@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { contextText, dedupeProposals, normalizeText, toProposals, type ExtractOutput, type RecordingContext } from "../../server/worker/extract.ts";
+import { chunkMessages, contextText, dedupeProposals, normalizeText, toProposals, type ExtractOutput, type RecordingContext } from "../../server/worker/extract.ts";
 
 const rc: RecordingContext = {
   interactionId: 7,
+  kind: "meeting",
   title: "Kitchen walkthrough",
   occurredAt: "2026-10-20T15:00:00.000Z",
   workspaceId: "strout_arch",
@@ -118,5 +119,35 @@ describe("contextText", () => {
 
   it("normalizes text for duplicate checks", () => {
     expect(normalizeText("  Ben will send $4,500 quote!! ")).toBe("ben will send $4 500 quote");
+  });
+});
+
+describe("threads and unfiled recordings (step 5 B)", () => {
+  it("names a thread for what it is, says where the stamps count from, and carries what was already read", () => {
+    const text = contextText({
+      ...rc,
+      kind: "email_thread",
+      title: "Re: framing plan",
+      alreadyRecorded: ["Ben will send the revised framing plan by Friday."],
+      earlierMessages: "[00:00:00] Dana Client: Can you send the plan?",
+    });
+    expect(text).toMatch(/^Email thread #7: Re: framing plan/);
+    expect(text).toContain("First message: 2026-10-20 15:00 UTC ([HH:MM:SS] stamps count from here)");
+    expect(text).toContain("Already recorded from this conversation (do not repeat):\n- Ben will send the revised framing plan by Friday.");
+    expect(text).toMatch(/Earlier messages, already read \(context only; extract nothing from these\):\n\[00:00:00\] Dana Client/);
+  });
+
+  it("says when the workspace is the classifier's guess rather than a filing", () => {
+    expect(contextText({ ...rc, workspaceId: "another_story", inferredFrom: 'title matches "another story"' })).toContain(
+      'Workspace: another_story (not filed yet; inferred from title matches "another story")',
+    );
+    expect(contextText(rc)).toContain("Workspace: strout_arch\n");
+  });
+
+  it("splits a thread by size without ever splitting a message", () => {
+    const seg = (idx: number, n: number) => ({ idx, start_sec: idx * 60, end_sec: idx * 60, speaker: "Dana", text: "x".repeat(n) });
+    const chunks = chunkMessages([seg(0, 400), seg(1, 400), seg(2, 400), seg(3, 2000)], 1000);
+    expect(chunks.map((c) => c.map((s) => s.idx))).toEqual([[0, 1], [2], [3]]);
+    expect(chunkMessages([])).toEqual([]);
   });
 });
