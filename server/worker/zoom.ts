@@ -51,7 +51,15 @@ export interface Recording {
   raw: Record<string, unknown>;
 }
 
-export class ZoomError extends Error {}
+export class ZoomError extends Error {
+  constructor(
+    message: string,
+    /** The HTTP status Zoom answered with, when it answered. */
+    readonly status?: number,
+  ) {
+    super(message);
+  }
+}
 export class ZoomAuthError extends ZoomError {}
 
 export interface ZoomClientOptions {
@@ -140,7 +148,7 @@ export class ZoomClient {
         await this.sleep(Math.min(60_000, 2 ** attempt * 1000));
         continue;
       }
-      throw new ZoomError(`Zoom API ${res.status} on ${path}: ${scrub(body)}`);
+      throw new ZoomError(`Zoom API ${res.status} on ${path}: ${scrub(body)}`, res.status);
     }
   }
 
@@ -188,6 +196,21 @@ export class ZoomClient {
       }
     }
     return users;
+  }
+
+  /**
+   * Who joined a past meeting, by meeting UUID (name, and email when the participant was signed
+   * in). Needs meeting:read:admin (or meeting:read:past_meeting:admin on granular apps); the
+   * recording-only app gets 400/403/404, which callers treat as "not available". UUIDs that start
+   * with "/" or contain "//" are double-encoded, as Zoom requires.
+   */
+  async pastMeetingParticipants(uuid: string): Promise<Array<{ name: string | null; email: string | null }>> {
+    const enc = uuid.startsWith("/") || uuid.includes("//") ? encodeURIComponent(encodeURIComponent(uuid)) : encodeURIComponent(uuid);
+    const out: Array<{ name: string | null; email: string | null }> = [];
+    for await (const p of this.paged<{ name?: string; user_email?: string }>(`/past_meetings/${enc}/participants`, { page_size: 300 }, "participants")) {
+      out.push({ name: p.name?.trim() || null, email: p.user_email?.trim().toLowerCase() || null });
+    }
+    return out;
   }
 
   async *listRecordings(userId: string, from: string, to: string): AsyncGenerator<Recording> {

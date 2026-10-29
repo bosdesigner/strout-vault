@@ -84,7 +84,19 @@ const envSchema = z.object({
   EXTRACT_MONTHLY_BUDGET_USD: z.coerce.number().min(0).default(0),
   // Workspaces whose recordings and threads are read. "*" is every workspace except phalanx
   // (investor material), personal and inbox; phalanx is only read when listed: "*,phalanx".
-  EXTRACT_WORKSPACES: z.string().default("*"),
+  // The default lists inbox (Phase 1): most texts, email, iPhone calls and every Apple Note sit
+  // there until their people are known, and their commitments count too. personal never by default.
+  EXTRACT_WORKSPACES: z.string().default("*,inbox"),
+  // "direct" (Phase 1): a commitment, task, decision or price the extractor is sure of
+  // (EXTRACT_FACT_MIN_CONFIDENCE+) is written to facts as open straight away, repeats merged
+  // into one fact; less sure ones, speaker matches and project links still go to Review.
+  // "review": every fact waits on Review, as in step 2.
+  EXTRACT_FACTS_MODE: z.enum(["direct", "review"]).default("direct"),
+  EXTRACT_FACT_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.75),
+  // How far back an open fact can be the "same promise" a new conversation repeats.
+  EXTRACT_DEDUPE_DAYS: z.coerce.number().int().positive().default(90),
+  // Requests per minute to Claude for extraction (0 = as fast as the API allows). The backfill sets it.
+  EXTRACT_RPM: z.coerce.number().min(0).default(0),
   EXTRACT_MAX_PER_RUN: z.coerce.number().int().positive().default(20),
   // Texts and email (Jarvis step 5 B, docs/FOLLOW-THROUGH.md): threads with a message in the last
   // N days are read, and read again when they gain messages (only the new ones are sent). 0 = off.
@@ -130,6 +142,18 @@ const envSchema = z.object({
   OWNER_PHONES: z.string().optional(),
   OWNER_EMAILS: z.string().optional(),
   OWNER_NAME: z.string().default("Ben"),
+  // More of Ben's names, comma-separated, so a title or calendar invite never makes him "the other
+  // participant" (Ben, Benjamin, Ben Strout and Benjamin Strout are always included).
+  OWNER_NAME_ALIASES: z.string().optional(),
+  // Ben's party name, when the vault creates one so facts can say "Ben owes this".
+  OWNER_FULL_NAME: z.string().default("Ben Strout"),
+  // ---- Participant resolver and filing (Phase 1, docs/phase1-verification.md) ----
+  // Recordings and iPhone calls linked to their people (and filed) per hourly run.
+  RESOLVE_MAX_PER_RUN: z.coerce.number().int().positive().default(200),
+  // "0" skips Zoom's participant list (it needs meeting:read:admin on the Zoom app).
+  RESOLVE_ZOOM_PARTICIPANTS: z.enum(["0", "1"]).default("1"),
+  // "0" skips the Google Calendar lookup (a connected Meet account with calendar.events.readonly).
+  RESOLVE_CALENDAR: z.enum(["0", "1"]).default("1"),
   // Directory holding message_routing.yml and message_blocklist.yml.
   MESSAGES_CONFIG_DIR: z.string().default("./config"),
   // 32 random bytes (hex or base64) that encrypt Gmail refresh tokens at rest (AES-256-GCM).

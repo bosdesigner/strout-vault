@@ -12,7 +12,7 @@ export interface PipelineReport {
   missingOffsite: { total: number; items: Array<{ id: number; title: string | null; occurredAt: string | null; source: string | null }> };
   spend: { month: string; groqUsd: number; anthropicUsd?: number; extractUsd?: number; followthroughUsd?: number };
   /** Jarvis step 2. Absent when migration 0007 has not been applied yet. */
-  extraction?: { unread: number; read: number; failed: number; openProposals: number; threads?: number };
+  extraction?: { unread: number; read: number; failed: number; openProposals: number; threads?: number; openFacts?: number; factsWritten?: number };
   clips?: { toReview: number; approved: number; cut: number; renderFailed: number; unscouted: number };
 }
 
@@ -98,7 +98,12 @@ async function extractionCounts(pool: pg.Pool): Promise<PipelineReport["extracti
       .query(`select count(*)::int as n from interactions where kind in ('text_thread', 'email_thread') and extracted_through_idx is not null`)
       .then((r) => r.rows[0].n as number)
       .catch((err) => ((err as { code?: string }).code === "42703" ? 0 : Promise.reject(err)));
-    return { unread: rows[0].unread, read: rows[0].read, failed: rows[0].failed, openProposals: rows[0].open_proposals, threads };
+    // Facts the extractor wrote directly (0013 adds facts.origin; older databases report none).
+    const facts = await pool
+      .query(`select count(*) filter (where coalesce(status, 'open') = 'open')::int as open, count(*) filter (where origin = 'extract')::int as written from facts`)
+      .then((r) => r.rows[0] as { open: number; written: number })
+      .catch((err) => ((err as { code?: string }).code === "42703" ? { open: 0, written: 0 } : Promise.reject(err)));
+    return { unread: rows[0].unread, read: rows[0].read, failed: rows[0].failed, openProposals: rows[0].open_proposals, threads, openFacts: facts.open, factsWritten: facts.written };
   } catch (err) {
     if ((err as { code?: string }).code === "42703") return null; // undefined column: 0007 not applied yet
     throw err;

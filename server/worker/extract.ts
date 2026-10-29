@@ -26,6 +26,9 @@ import { chunkSegments, chunkText, CHUNK_SECONDS, estimateScoutCostUsd, priceFor
 import { parseStoredScope, resolveScope } from "../mcp/scope.ts";
 import { PROPOSAL_SCHEMAS } from "../mcp/tools/propose.ts";
 import { classifyRecording } from "../workspaces/classify.ts";
+import { resolveDueDate } from "../facts/dates.ts";
+import { ensureOwnerParty, storeFact } from "../facts/store.ts";
+import { ownerWithAccounts } from "./resolve.ts";
 import { collectSignals, queueProposals, WORKSPACE_ITEM_TYPE } from "../workspaces/propose.ts";
 
 export const EXTRACT_PROVIDER = "anthropic-extract";
@@ -38,7 +41,9 @@ const EARLIER_MESSAGES = 6;
 export const UNFILED_MIN_CONFIDENCE = 0.85;
 /** How many unfiled recordings are classified per run to find the confident ones. */
 const UNFILED_SCAN = 200;
-const FACT_KINDS = ["commitment", "decision", "price", "followup", "issue", "preference", "other"] as const;
+const FACT_KINDS = ["commitment", "task", "decision", "price", "followup", "issue", "preference", "other"] as const;
+/** Kinds read once like a recording (not threads): everything with segments, notes included. */
+const OPEN_FACTS_LIMIT = 40;
 /** Roster and project lists sent with every chunk; also covers the per-chunk prompt overhead in the estimate. */
 const CONTEXT_OVERHEAD_TOKENS = 2500;
 const ROSTER_LIMIT = 150;
@@ -46,21 +51,24 @@ const PROJECT_LIMIT = 100;
 
 export const EXTRACT_SYSTEM_PROMPT = `You read transcripts of business conversations for Ben Strout (a residential builder and architect who also runs a construction franchise and invests) and pull out what his relationship records should remember. Everything you return is a proposal that Ben reviews one by one, so precision matters far more than recall: a missed item costs nothing, a wrong one costs his time.
 
-You get, before the transcript chunk: the recording (title, date, workspace), the people already known to the vault (party ids, names, roles, and speaker labels already matched), the projects in this workspace (project ids, names, addresses), and the speaker labels in the recording that are not matched yet.
+You get, before the transcript chunk: the recording (title, date, workspace), the people already known to the vault (party ids, names, roles, and speaker labels already matched; Ben himself is listed as the vault owner when he has a party id), the projects in this workspace (project ids, names, addresses), the speaker labels in the recording that are not matched yet, and open items already on record for these people. An Apple Note is Ben's own writing: every line is his.
 
 Some conversations are text-message or email threads rather than recordings. There each line is one message, the speaker is the sender (Ben's own messages carry his name), and the [HH:MM:SS] stamp counts time since the thread's first message, so it can run past 24 hours; quote_start_sec uses the same count. A promise in Ben's own message is a commitment owned by Ben; a question or request to Ben that the thread leaves unanswered is a followup. When the context lists messages already read or items already recorded, use them only to understand the new messages: extract only from the new messages, and never repeat an item that is already recorded. Skip newsletters, receipts, automated notifications, signatures and quoted earlier replies.
 
 Return three lists:
 
 facts: things said in this chunk that someone would need later.
-- commitment: a person promised to do something ("I'll send the drawings Friday"). owner_party_id is who promised, when known.
+- commitment: a person promised to do something concrete ("I'll send the drawings Friday"). owner_party_id is who promised (who owes it), when known.
+- task: a concrete to-do someone took on or was given, without a promise to a particular person ("Ben needs to pull the permit"; a to-do line in Ben's own note is a task owned by Ben).
 - followup: something that still has to happen next, without a clear promise.
 - decision: something agreed or settled ("we're going with the metal roof").
 - price: a number with money attached (a quote, a budget, a fee). Put the number in amount, in dollars.
 - issue: a problem, risk, complaint or open question that matters to the work.
 - preference: a durable preference of a client or partner ("she hates open shelving").
 - other: only if it clearly matters and fits none of the above.
-Write text as one plain sentence a stranger understands without the transcript: name the people and the thing ("Tanner will send Ben the revised framing plan by Friday"), never "he" or "they". due_date only when a date is stated or unambiguous from the recording date (YYYY-MM-DD); otherwise null. quote_start_sec is the [HH:MM:SS] stamp of the line it comes from, in seconds from the start of the recording; quote is that line's words, verbatim and short. Skip small talk, scheduling of this very call, and anything said only hypothetically.
+Write text as one plain sentence a stranger understands without the transcript: name the people and the thing ("Tanner will send Ben the revised framing plan by Friday"), never "he" or "they". due_text is the deadline exactly as said ("Friday", "end of next week", "by the 15th", "tomorrow"), or null when none was said; the vault resolves it against the moment it was said. due_date only when a calendar date is stated or unambiguous from the recording date (YYYY-MM-DD); otherwise null. quote_start_sec is the [HH:MM:SS] stamp of the line it comes from, in seconds from the start of the recording; quote is that line's words, verbatim and short. Skip small talk, scheduling of this very call, and anything said only hypothetically.
+Only real commitments, tasks and follow-ups: a specific action that someone owes. "We should talk sometime", "let's stay in touch", "I'll think about it" and pleasantries are not commitments; leave them out.
+When the context lists open items already on record and this is the same promise or task again (said again, confirmed, or with a new date), set same_as_fact_id to that item's id instead of writing it as new; otherwise same_as_fact_id is null.
 
 speakers: a speaker label from the unmatched list that is clearly one of the known people (they are addressed by name, introduce themselves, or the content makes it unambiguous). Never guess between two people; never match a label to someone not in the known list.
 
@@ -80,9 +88,11 @@ export const ExtractOutputSchema = z.object({
       project_id: z.number().int().nullable(),
       amount: z.number().nullable(),
       due_date: z.string().nullable(),
+      due_text: z.string().nullable(),
       quote_start_sec: z.number(),
       quote: z.string(),
       confidence: z.number(),
+      same_as_fact_id: z.number().int().nullable(),
     }),
   ),
   speakers: z.array(z.object({ speaker_label: z.string(), party_id: z.number().int(), confidence: z.number(), evidence: z.string() })),
@@ -110,6 +120,8 @@ export interface RecordingContext {
   /** Parties already on the recording, so a speaker match never proposes them twice. */
   participantIds: Set<number>;
   linkedProjectIds: Set<number>;
+  /** Open commitments, tasks and follow-ups already on record for these people (or this conversation), for same_as_fact_id. */
+  openFacts?: Array<{ id: number; kind: string; text: string; due: string | null }>;
 }
 
 export interface Proposal {
@@ -118,6 +130,8 @@ export interface Proposal {
   reason: string;
   /** Dedup key within one recording, compared against what review_queue already holds. */
   key: string;
+  /** new_fact only: what a written fact keeps beyond the review shape. */
+  extra?: { quote: string | null; dueText: string | null; sameAsFactId: number | null; messageIndex?: number | null };
 }
 
 export interface ExtractSummary {
@@ -132,6 +146,8 @@ export interface ExtractSummary {
   /** Filings queued for review for the unfiled recordings read. */
   filingProposals: number;
   queued: { facts: number; speakers: number; projects: number };
+  /** EXTRACT_FACTS_MODE=direct: facts written as open, and repeats folded into a fact already on record. */
+  written: { facts: number; merged: number };
   waitingOnBudget: number;
   failed: number;
   spentUsd: number;
@@ -196,6 +212,8 @@ export function contextText(rc: RecordingContext): string {
         })
       : ["- (no labels)"]),
   ];
+  if (rc.openFacts?.length)
+    lines.push("", "Open items already on record for these people (fact id · kind · text · due):", ...rc.openFacts.map((f) => `- ${f.id} · ${f.kind} · ${f.text} · ${f.due ?? "no date"}`));
   if (rc.alreadyRecorded?.length) lines.push("", "Already recorded from this conversation (do not repeat):", ...rc.alreadyRecorded.map((t) => `- ${t}`));
   if (rc.earlierMessages) lines.push("", "Earlier messages, already read (context only; extract nothing from these):", rc.earlierMessages);
   return lines.join("\n");
@@ -242,7 +260,11 @@ export function toProposals(out: ExtractOutput | null | undefined, rc: Recording
     const at = Number(f.quote_start_sec);
     if (confidence < minConfidence || !text || !Number.isFinite(at)) continue;
     if (!(chunkStart - 5 <= at && at <= chunkEnd + 5)) continue;
-    const due = typeof f.due_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(f.due_date) && !Number.isNaN(Date.parse(f.due_date)) ? f.due_date : undefined;
+    // A spoken deadline ("Friday") resolves against when it was said; the model's own date is the fallback.
+    const dueText = typeof f.due_text === "string" && f.due_text.trim() ? f.due_text.trim().slice(0, 120) : null;
+    const saidAt = rc.occurredAt ? new Date(new Date(rc.occurredAt).getTime() + Math.max(0, at) * 1000) : null;
+    const spoken = dueText && saidAt ? resolveDueDate(dueText, saidAt) : null;
+    const due = spoken ?? (typeof f.due_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(f.due_date) && !Number.isNaN(Date.parse(f.due_date)) ? f.due_date : undefined);
     const amount = typeof f.amount === "number" && Number.isFinite(f.amount) ? f.amount : undefined;
     const proposal: Record<string, unknown> = {
       interaction_id: rc.interactionId,
@@ -261,7 +283,14 @@ export function toProposals(out: ExtractOutput | null | undefined, rc: Recording
     const quote = String(f.quote ?? "")
       .trim()
       .slice(0, 300);
-    result.push({ itemType: "new_fact", proposal, reason: quote ? `“${quote}” at ${stamp(at)}` : `at ${stamp(at)}`, key: `fact:${f.kind}:${normalizeText(text)}` });
+    const offered = new Set((rc.openFacts ?? []).map((o) => o.id));
+    result.push({
+      itemType: "new_fact",
+      proposal,
+      reason: quote ? `“${quote}” at ${stamp(at)}` : `at ${stamp(at)}`,
+      key: `fact:${f.kind}:${normalizeText(text)}`,
+      extra: { quote: quote || null, dueText, sameAsFactId: f.same_as_fact_id != null && offered.has(f.same_as_fact_id) ? f.same_as_fact_id : null },
+    });
   }
 
   for (const s of out?.speakers ?? []) {
@@ -317,7 +346,7 @@ export function dedupeProposals(all: Proposal[]): Proposal[] {
   return out;
 }
 
-export async function loadRecordingContext(pool: pg.Pool, interactionId: number, opts: { workspaceId?: string; inferredFrom?: string } = {}): Promise<RecordingContext> {
+export async function loadRecordingContext(pool: pg.Pool, interactionId: number, opts: { workspaceId?: string; inferredFrom?: string; ownerParty?: { id: number; name: string } } = {}): Promise<RecordingContext> {
   const {
     rows: [rec],
   } = await pool.query(`select id, kind, title, occurred_at, workspace_id from interactions where id = $1`, [interactionId]);
@@ -353,16 +382,29 @@ export async function loadRecordingContext(pool: pg.Pool, interactionId: number,
     ),
     pool.query(`select project_id from interaction_links where interaction_id = $1`, [interactionId]),
   ]);
-  const roster: RecordingContext["roster"] = participants.rows.map((p) => ({
+  const roster: RecordingContext["roster"] = opts.ownerParty ? [{ id: opts.ownerParty.id, name: opts.ownerParty.name, kind: "person", detail: "Ben himself, the vault owner" }] : [];
+  roster.push(
+    ...participants.rows
+      .filter((p) => Number(p.id) !== opts.ownerParty?.id)
+      .map((p) => ({
     id: Number(p.id),
     name: p.name,
     kind: p.kind,
     detail: `on this recording${p.speaker_label ? ` as ${p.speaker_label}` : ""}`,
-  }));
+      })),
+  );
   for (const p of people.rows) {
     if (roster.some((r) => r.id === Number(p.id))) continue;
     roster.push({ id: Number(p.id), name: p.name, kind: p.kind, detail: [p.kind === "org" ? "company" : null, p.roles, p.orgs ? `at ${p.orgs}` : null].filter(Boolean).join(", ") });
   }
+  const onRecording = [...new Set(participants.rows.map((p) => Number(p.id)))];
+  const open = await pool.query(
+    `select f.id, f.kind, f.text, f.due_date from facts f
+      where coalesce(f.status, 'open') = 'open' and f.kind = any($3::text[])
+        and (f.interaction_id = $1 or f.owner_party_id = any($2::bigint[]) or f.about_party_id = any($2::bigint[]))
+      order by f.created_at desc limit ${OPEN_FACTS_LIMIT}`,
+    [interactionId, onRecording, ["commitment", "task", "followup"]],
+  );
   return {
     interactionId,
     kind: rec.kind,
@@ -375,6 +417,7 @@ export async function loadRecordingContext(pool: pg.Pool, interactionId: number,
     labels: labels.rows.map((l) => ({ label: l.label, lines: l.lines, partyId: l.party_id ? Number(l.party_id) : null })),
     participantIds: new Set(participants.rows.map((p) => Number(p.id))),
     linkedProjectIds: new Set(links.rows.map((l) => Number(l.project_id))),
+    openFacts: open.rows.map((f) => ({ id: Number(f.id), kind: f.kind, text: f.text, due: f.due_date ? new Date(f.due_date).toISOString().slice(0, 10) : null })),
   };
 }
 
@@ -402,18 +445,32 @@ interface Job {
   filing?: { confidence: number; evidence: string[]; alsoConsidered: string[]; open: boolean };
 }
 
-/** Filed recordings not read yet. */
-async function recordingJobs(ctx: WorkerContext, workspaces: string[]): Promise<Job[]> {
+/** What a run (or a backfill pass) reads: a window on occurred_at, and how far back threads go. */
+export interface ExtractOptions {
+  since?: Date;
+  until?: Date;
+  /** Threads with a message since this date; null = no limit (the backfill's "the rest"). Default: EXTRACT_THREAD_DAYS. */
+  threadsSince?: Date | null;
+  maxPerRun?: number;
+  threadsPerRun?: number;
+}
+
+/** Filed recordings, calls, voice memos and notes not read yet (a note has segments but no transcripts row). */
+async function recordingJobs(ctx: WorkerContext, workspaces: string[], o: ExtractOptions = {}): Promise<Job[]> {
+  const params: unknown[] = [workspaces, o.maxPerRun ?? ctx.config.EXTRACT_MAX_PER_RUN];
+  const window = [o.since ? `and i.occurred_at >= $${params.push(o.since)}` : "", o.until ? `and i.occurred_at < $${params.push(o.until)}` : ""].join(" ");
   const { rows } = await ctx.pool.query(
-    `select i.id, i.title, i.occurred_at, t.word_count,
-            (select max(s.end_sec) - min(s.start_sec) from segments s where s.interaction_id = i.id) as span_sec
-       from interactions i join transcripts t on t.interaction_id = i.id
+    `select i.id, i.title, i.occurred_at,
+            coalesce(t.word_count, (select sum(array_length(regexp_split_to_array(s.text, '\\s+'), 1)) from segments s where s.interaction_id = i.id))::int as word_count,
+            case when i.kind = 'note' then 0 else (select max(s.end_sec) - min(s.start_sec) from segments s where s.interaction_id = i.id) end as span_sec
+       from interactions i left join transcripts t on t.interaction_id = i.id
       where i.extracted_at is null and i.workspace_id = any($1::text[])
         and i.kind not in ('text_thread', 'email_thread')
         and exists (select 1 from segments s where s.interaction_id = i.id)
+        ${window}
       order by i.occurred_at desc nulls last, i.id desc
       limit $2`,
-    [workspaces, ctx.config.EXTRACT_MAX_PER_RUN],
+    params,
   );
   return rows.map((r) => ({
     id: Number(r.id),
@@ -468,9 +525,9 @@ async function unfiledJobs(ctx: WorkerContext, workspaces: string[], limit: numb
 }
 
 /** Text and email threads with a message in the last EXTRACT_THREAD_DAYS that has not been read. */
-async function threadJobs(ctx: WorkerContext, workspaces: string[]): Promise<Job[]> {
-  if (ctx.config.EXTRACT_THREAD_DAYS <= 0) return [];
-  const since = new Date(ctx.now().getTime() - ctx.config.EXTRACT_THREAD_DAYS * 86_400_000);
+async function threadJobs(ctx: WorkerContext, workspaces: string[], o: ExtractOptions = {}): Promise<Job[]> {
+  if (o.threadsSince === undefined && ctx.config.EXTRACT_THREAD_DAYS <= 0) return [];
+  const since = o.threadsSince === undefined ? new Date(ctx.now().getTime() - ctx.config.EXTRACT_THREAD_DAYS * 86_400_000) : (o.threadsSince ?? new Date(0));
   // occurred_at is the first message; the last one is occurred_at + its offset. Ingest bumps
   // updated_at on every change, so it bounds the scan cheaply.
   const { rows } = await ctx.pool.query(
@@ -486,7 +543,7 @@ async function threadJobs(ctx: WorkerContext, workspaces: string[]): Promise<Job
         and s.last_at >= $3
       order by s.last_at desc, i.id desc
       limit $4`,
-    [THREAD_KINDS, workspaces, since, ctx.config.EXTRACT_THREADS_PER_RUN],
+    [THREAD_KINDS, workspaces, since, o.threadsPerRun ?? ctx.config.EXTRACT_THREADS_PER_RUN],
   );
   return rows.map((r) => ({
     id: Number(r.id),
@@ -498,7 +555,7 @@ async function threadJobs(ctx: WorkerContext, workspaces: string[]): Promise<Job
   }));
 }
 
-export async function processExtraction(ctx: WorkerContext): Promise<ExtractSummary> {
+export async function processExtraction(ctx: WorkerContext, opts: ExtractOptions = {}): Promise<ExtractSummary> {
   const summary: ExtractSummary = {
     configured: extractConfigured(ctx),
     candidatesRecordings: 0,
@@ -508,6 +565,7 @@ export async function processExtraction(ctx: WorkerContext): Promise<ExtractSumm
     unfiled: 0,
     filingProposals: 0,
     queued: { facts: 0, speakers: 0, projects: 0 },
+    written: { facts: 0, merged: 0 },
     waitingOnBudget: 0,
     failed: 0,
     spentUsd: 0,
@@ -518,9 +576,9 @@ export async function processExtraction(ctx: WorkerContext): Promise<ExtractSumm
     return summary;
   }
   const workspaces = await extractWorkspaces(ctx.pool, ctx.config.EXTRACT_WORKSPACES);
-  const recordings = await recordingJobs(ctx, workspaces);
-  const unfiled = await unfiledJobs(ctx, workspaces, ctx.config.EXTRACT_MAX_PER_RUN - recordings.length);
-  const threads = await threadJobs(ctx, workspaces);
+  const recordings = await recordingJobs(ctx, workspaces, opts);
+  const unfiled = opts.since || opts.until ? [] : await unfiledJobs(ctx, workspaces, (opts.maxPerRun ?? ctx.config.EXTRACT_MAX_PER_RUN) - recordings.length);
+  const threads = await threadJobs(ctx, workspaces, opts);
   summary.candidatesRecordings = recordings.length + unfiled.length;
   summary.candidatesThreads = threads.length;
   // Threads first (they are what is waiting on a reply), then recordings newest first.
@@ -535,6 +593,9 @@ export async function processExtraction(ctx: WorkerContext): Promise<ExtractSumm
     `extract: ${recordings.length} recording(s), ${unfiled.length} unfiled, ${threads.length} thread(s) to read (model ${model}, effort ${ctx.config.EXTRACT_EFFORT}, workspaces ${workspaces.join(", ")})`,
   );
   const client = makeClient(ctx);
+  // Ben as a party, so the facts he owes say so (created once; see facts/store.ts).
+  const ownerParty = ctx.config.EXTRACT_FACTS_MODE === "direct" ? await ensureOwnerParty(ctx.pool, await ownerWithAccounts(ctx.pool, ctx.config), ctx.config.OWNER_FULL_NAME) : undefined;
+  const pace = pacer(ctx);
   for (const job of jobs) {
     if (outOfTime(ctx)) {
       summary.stoppedEarly = "time budget";
@@ -546,7 +607,7 @@ export async function processExtraction(ctx: WorkerContext): Promise<ExtractSumm
     if (!check.allowed) {
       summary.waitingOnBudget++;
       summary.stoppedEarly = "extract budget";
-      await ctx.pool.query(`update interactions set extract_error = $2 where id = $1`, [job.id, `waiting: ${check.reason}`]);
+      await ctx.pool.query(`update interactions set extract_error = $2, facts_status = 'waiting' where id = $1`, [job.id, `waiting: ${check.reason}`]);
       ctx.log(`extract:   ${label}: ${check.reason}`);
       break;
     }
@@ -557,22 +618,24 @@ export async function processExtraction(ctx: WorkerContext): Promise<ExtractSumm
         job.filing.open = true;
         summary.filingProposals++;
       }
-      const r = await extractRecording(ctx, client, model, job.id, { workspaceId: job.workspaceId, inferredFrom: job.inferredFrom });
+      const r = await extractRecording(ctx, client, model, job.id, { workspaceId: job.workspaceId, inferredFrom: job.inferredFrom, ownerParty, pace });
       summary.read++;
       if (job.kind === "thread") summary.threads++;
       if (job.kind === "unfiled") summary.unfiled++;
       summary.queued.facts += r.queued.facts;
       summary.queued.speakers += r.queued.speakers;
       summary.queued.projects += r.queued.projects;
+      summary.written.facts += r.written.facts;
+      summary.written.merged += r.written.merged;
       summary.spentUsd += r.costUsd;
       ctx.log(
-        `extract:   ${label}${job.kind === "unfiled" ? ` (unfiled, read as ${job.workspaceId})` : ""}: ${r.queued.facts} fact(s), ${r.queued.speakers} speaker match(es), ${r.queued.projects} project link(s) queued from ${r.chunks} chunk(s) ($${r.costUsd.toFixed(3)})`,
+        `extract:   ${label}${job.kind === "unfiled" ? ` (unfiled, read as ${job.workspaceId})` : ""}: ${r.written.facts} fact(s) written, ${r.written.merged} merged into ones on record; ${r.queued.facts} fact(s), ${r.queued.speakers} speaker match(es), ${r.queued.projects} project link(s) queued from ${r.chunks} chunk(s) ($${r.costUsd.toFixed(3)})`,
       );
     } catch (err) {
       const msg = (err as Error).message.slice(0, 500);
       summary.failed++;
       summary.errors.push(`${label}: ${msg}`);
-      await ctx.pool.query(`update interactions set extract_error = $2 where id = $1`, [job.id, msg]);
+      await ctx.pool.query(`update interactions set extract_error = $2, facts_status = 'failed' where id = $1`, [job.id, msg]);
       ctx.log(`extract:   ${label}: FAILED ${msg}`);
       if (err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError) {
         summary.stoppedEarly = "api key refused";
@@ -585,6 +648,25 @@ export async function processExtraction(ctx: WorkerContext): Promise<ExtractSumm
 
 type IndexedSegment = SegmentRow & { idx: number };
 
+/** Spaces Claude requests out to EXTRACT_RPM per minute (the backfill sets it); a no-op at 0. */
+function pacer(ctx: WorkerContext): () => Promise<void> {
+  const gap = ctx.config.EXTRACT_RPM > 0 ? 60_000 / ctx.config.EXTRACT_RPM : 0;
+  let last = 0;
+  return async () => {
+    if (!gap) return;
+    const wait = last + gap - ctx.now().getTime();
+    if (wait > 0) await ctx.sleep(wait);
+    last = ctx.now().getTime();
+  };
+}
+
+/** The message (thread) or paragraph (note) a fact's stamp points at: the last one starting at or before it. */
+export function messageIndexAt(chunk: IndexedSegment[], at: number): number | null {
+  let hit: IndexedSegment | null = null;
+  for (const s of chunk) if ((s.start_sec ?? 0) <= at + 0.5 && (!hit || (s.start_sec ?? 0) >= (hit.start_sec ?? 0))) hit = s;
+  return hit?.idx ?? chunk[0]?.idx ?? null;
+}
+
 /**
  * Read one recording or thread chunk by chunk and queue what holds up. A recording is read once
  * (interactions.extracted_at); a thread is read up to its last message (extracted_through_idx)
@@ -595,13 +677,18 @@ export async function extractRecording(
   client: Anthropic,
   model: string,
   interactionId: number,
-  opts: { workspaceId?: string; inferredFrom?: string } = {},
-): Promise<{ queued: ExtractSummary["queued"]; chunks: number; costUsd: number }> {
+  opts: { workspaceId?: string; inferredFrom?: string; ownerParty?: { id: number; name: string }; pace?: () => Promise<void> } = {},
+): Promise<{ queued: ExtractSummary["queued"]; written: ExtractSummary["written"]; chunks: number; costUsd: number }> {
   const rc = await loadRecordingContext(ctx.pool, interactionId, opts);
-  const { rows: segments } = await ctx.pool.query<IndexedSegment>(`select idx, start_sec, end_sec, speaker, text from segments where interaction_id = $1 order by idx`, [interactionId]);
+  const { rows: stored } = await ctx.pool.query<IndexedSegment>(`select idx, start_sec, end_sec, speaker, text from segments where interaction_id = $1 order by idx`, [interactionId]);
   const thread = isThread(rc.kind);
+  const note = rc.kind === "note";
+  // A note's paragraphs all sit at 0 s: stamp each with its paragraph number instead, so a fact
+  // points at the paragraph it came from (message_index) and chunks split by size, not by time.
+  const segments = note ? stored.map((s) => ({ ...s, start_sec: s.idx, end_sec: s.idx })) : stored;
+  const byMessage = thread || note;
   const lastIdx = segments.length ? segments[segments.length - 1].idx : null;
-  let chunks: SegmentRow[][];
+  let chunks: IndexedSegment[][];
   if (thread) {
     const {
       rows: [state],
@@ -620,13 +707,16 @@ export async function extractRecording(
       rc.alreadyRecorded = recorded.rows.map((r) => String(r.text)).filter(Boolean);
     }
     chunks = chunkMessages(fresh);
+  } else if (note) {
+    chunks = chunkMessages(segments);
   } else {
-    chunks = chunkSegments(segments);
+    chunks = chunkSegments(segments) as IndexedSegment[][];
   }
   const context = contextText(rc);
   const found: Proposal[] = [];
   let costUsd = 0;
   const queued = { facts: 0, speakers: 0, projects: 0 };
+  const written = { facts: 0, merged: 0 };
   try {
     await readChunks();
     await queue();
@@ -639,16 +729,17 @@ export async function extractRecording(
         interactionId,
         unitsSec: null,
         usd: costUsd,
-        note: `${chunks.length} chunk(s), ${queued.facts + queued.speakers + queued.projects} proposal(s)`,
+        note: `${chunks.length} chunk(s), ${written.facts} fact(s) written, ${written.merged} merged, ${queued.facts + queued.speakers + queued.projects} proposal(s)`,
       });
     }
   }
-  return { queued, chunks: chunks.length, costUsd };
+  return { queued, written, chunks: chunks.length, costUsd };
 
   async function readChunks(): Promise<void> {
     for (const chunk of chunks) {
       const chunkStart = chunk[0].start_sec || 0;
       const chunkEnd = Math.max(...chunk.map((s) => s.end_sec || s.start_sec || 0));
+      await opts.pace?.();
       const response = await client.beta.messages.parse({
         model,
         max_tokens: 16000,
@@ -660,7 +751,12 @@ export async function extractRecording(
             role: "user",
             content: [
               { type: "text", text: context },
-              { type: "text", text: `${thread ? "New messages" : "Transcript chunk"} (${stamp(chunkStart)} to ${stamp(chunkEnd)}):\n\n${chunkText(chunk)}` },
+              {
+                type: "text",
+                text: note
+                  ? `Apple Note, paragraphs ${chunkStart} to ${chunkEnd} (the [HH:MM:SS] stamp is the paragraph number, not a time):\n\n${chunkText(chunk)}`
+                  : `${thread ? "New messages" : "Transcript chunk"} (${stamp(chunkStart)} to ${stamp(chunkEnd)}):\n\n${chunkText(chunk)}`,
+              },
             ],
           },
         ],
@@ -669,7 +765,15 @@ export async function extractRecording(
       costUsd += usageCostUsd(response.usage, response.model || model);
       if (response.stop_reason === "refusal") continue; // this chunk yields nothing; the rest still runs
       if (response.stop_reason === "max_tokens") throw new ExtractError("the reply was cut off (max_tokens); the chunk may be too long");
-      found.push(...toProposals(response.parsed_output, rc, chunkStart, chunkEnd, ctx.config.EXTRACT_MIN_CONFIDENCE));
+      const kept = toProposals(response.parsed_output, rc, chunkStart, chunkEnd, ctx.config.EXTRACT_MIN_CONFIDENCE);
+      for (const p of kept) {
+        if (p.itemType !== "new_fact" || !p.extra || !byMessage) continue;
+        const at = Number(p.proposal.quote_start_sec ?? 0);
+        p.extra.messageIndex = note ? Math.round(at) : messageIndexAt(chunk, at);
+        // A note's "seconds" were paragraph numbers; the moment itself is the note's start.
+        if (note) p.proposal.quote_start_sec = 0;
+      }
+      found.push(...kept);
     }
   }
 
@@ -690,15 +794,45 @@ export async function extractRecording(
         }
         if (r.item_type === "link_project_interaction") taken.add(`project:${String(p.project_id)}`);
       }
-      const facts = await db.query(`select kind, text from facts where interaction_id = $1`, [interactionId]);
+      const facts = await db.query(`select kind, text from facts where interaction_id = $1 or id in (select fact_id from fact_sources where interaction_id = $1)`, [interactionId]);
       for (const f of facts.rows) taken.add(`fact:${f.kind}:${normalizeText(f.text)}`);
 
       const stamped = { source: "extract", model, proposed_at: ctx.now().toISOString() };
+      const direct = ctx.config.EXTRACT_FACTS_MODE === "direct";
       for (const p of proposals) {
         if (taken.has(p.key) || (p.itemType === "link_party_interaction" && taken.has(`party:${String(p.proposal.party_id)}`))) continue;
         // Same shapes as the MCP tool, so approval goes through one code path.
         const valid = PROPOSAL_SCHEMAS[p.itemType].safeParse(p.proposal);
         if (!valid.success) continue;
+        // Sure enough: an open fact now (or one more source for the same promise already on record).
+        if (direct && p.itemType === "new_fact" && Number(p.proposal.confidence ?? 0) >= ctx.config.EXTRACT_FACT_MIN_CONFIDENCE) {
+          const v = valid.data as Record<string, unknown>;
+          const out = await storeFact(
+            db,
+            {
+              interactionId,
+              workspaceId: String(v.workspace_id ?? rc.workspaceId),
+              kind: String(v.kind),
+              text: String(v.text),
+              ownerPartyId: (v.owner_party_id as number | undefined) ?? null,
+              aboutPartyId: (v.about_party_id as number | undefined) ?? null,
+              projectId: (v.project_id as number | undefined) ?? null,
+              amount: (v.amount as number | undefined) ?? null,
+              dueDate: (v.due_date as string | undefined) ?? null,
+              dueText: p.extra?.dueText ?? null,
+              quote: p.extra?.quote ?? null,
+              quoteStartSec: (v.quote_start_sec as number | undefined) ?? null,
+              messageIndex: p.extra?.messageIndex ?? null,
+              confidence: Number(v.confidence ?? 0),
+              sameAsFactId: p.extra?.sameAsFactId ?? null,
+            },
+            { dedupeDays: ctx.config.EXTRACT_DEDUPE_DAYS },
+          );
+          taken.add(p.key);
+          if (out.merged) written.merged++;
+          else written.facts++;
+          continue;
+        }
         await db.query(`insert into review_queue (item_type, proposal, reason, interaction_id, status) values ($1, $2::jsonb, $3, $4, 'open')`, [
           p.itemType,
           JSON.stringify({ ...(valid.data as Record<string, unknown>), ...stamped }),
@@ -710,7 +844,7 @@ export async function extractRecording(
         else if (p.itemType === "link_party_interaction") queued.speakers++;
         else queued.projects++;
       }
-      await db.query(`update interactions set extracted_at = now(), extract_model = $2, extract_error = null, extracted_through_idx = $3, updated_at = now() where id = $1`, [
+      await db.query(`update interactions set extracted_at = now(), extract_model = $2, extract_error = null, extracted_through_idx = $3, facts_status = 'done', updated_at = now() where id = $1`, [
         interactionId,
         model,
         thread ? lastIdx : null,

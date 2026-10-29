@@ -21,6 +21,8 @@
     "db:local": "tsx scripts/db-local.ts",
     "db:bench": "tsx scripts/bench-search.ts",
     "embed:backfill": "tsx scripts/backfill-embeddings.ts",
+    "extract:backfill": "tsx scripts/extract-backfill.ts",
+    "resolve:backfill": "tsx scripts/resolve-backfill.ts",
     "mcp:semantic-check": "tsx scripts/semantic-check.ts",
     "workspaces:propose": "tsx scripts/propose-workspaces.ts",
     "messages:gmail": "tsx scripts/gmail-backfill.ts",

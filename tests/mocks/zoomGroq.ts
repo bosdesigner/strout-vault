@@ -132,9 +132,9 @@ export function createMockServices(initial: MockRecording[], opts: { pageSize?: 
     const stranger = roster.find((r) => !r.onRecording)?.id;
     const out = {
       facts: [
-        { kind: "commitment", text: `Mock: ${first.line.replace(/^[^:]{1,60}: /, "").slice(0, 120)}`, owner_party_id: owner, about_party_id: 999999, project_id: projects[0] ?? null, amount: null, due_date: "2026-11-02", quote_start_sec: first.sec, quote: first.line.slice(0, 80), confidence: 0.9 },
-        { kind: "price", text: "Invented timestamp", owner_party_id: null, about_party_id: null, project_id: null, amount: 1200, due_date: null, quote_start_sec: last.sec + 900, quote: "invented", confidence: 0.95 },
-        { kind: "decision", text: "Too unsure to queue", owner_party_id: null, about_party_id: null, project_id: null, amount: null, due_date: "next week", quote_start_sec: first.sec, quote: "maybe", confidence: 0.3 },
+        { kind: "commitment", text: `Mock: ${first.line.replace(/^[^:]{1,60}: /, "").slice(0, 120)}`, owner_party_id: owner, about_party_id: 999999, project_id: projects[0] ?? null, amount: null, due_date: "2026-11-02", due_text: null, quote_start_sec: first.sec, quote: first.line.slice(0, 80), confidence: 0.9, same_as_fact_id: null },
+        { kind: "price", text: "Invented timestamp", owner_party_id: null, about_party_id: null, project_id: null, amount: 1200, due_date: null, due_text: null, quote_start_sec: last.sec + 900, quote: "invented", confidence: 0.95, same_as_fact_id: null },
+        { kind: "decision", text: "Too unsure to queue", owner_party_id: null, about_party_id: null, project_id: null, amount: null, due_date: "next week", due_text: null, quote_start_sec: first.sec, quote: "maybe", confidence: 0.3, same_as_fact_id: null },
       ],
       speakers: [
         ...(unmatched[0] && stranger ? [{ speaker_label: unmatched[0], party_id: stranger, confidence: 0.85, evidence: "addressed by name" }] : []),

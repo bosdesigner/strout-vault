@@ -29,8 +29,10 @@ const fact = (over: Partial<ExtractOutput["facts"][number]> = {}): ExtractOutput
   amount: null,
   due_date: "2026-10-24",
   quote_start_sec: 120,
+  due_text: null,
   quote: "I'll get you the revised plan Friday",
   confidence: 0.9,
+  same_as_fact_id: null,
   ...over,
 });
 

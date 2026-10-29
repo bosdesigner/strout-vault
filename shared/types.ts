@@ -84,6 +84,8 @@ export interface FactItem {
   text: string;
   status: string | null;
   quoteStartSec: number | null;
+  /** The words it came from, verbatim (facts written by the extractor). */
+  quote?: string | null;
   ownerParty: ParticipantRef | null;
   aboutParty: ParticipantRef | null;
   amount: number | null;

@@ -35,6 +35,10 @@ function makeConfig(overrides: Record<string, string> = {}): Config {
     ANTHROPIC_API_URL: "https://anthropic.test",
     EXTRACT_MONTHLY_BUDGET_USD: "5",
     EXTRACT_MAX_PER_RUN: "3",
+    // These tests cover the review path (step 2) and the step-2 workspace default; Phase 1's direct
+    // facts and inbox reading are covered in tests/api/phase1.test.ts.
+    EXTRACT_FACTS_MODE: "review",
+    EXTRACT_WORKSPACES: "*",
     ...overrides,
   });
 }

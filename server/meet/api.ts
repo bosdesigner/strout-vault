@@ -40,7 +40,9 @@ export interface CalendarEvent {
   start?: { dateTime?: string };
   end?: { dateTime?: string };
   hangoutLink?: string;
-  conferenceData?: { conferenceSolution?: { key?: { type?: string } }; conferenceId?: string };
+  location?: string;
+  description?: string;
+  conferenceData?: { conferenceSolution?: { key?: { type?: string } }; conferenceId?: string; entryPoints?: Array<{ uri?: string }> };
   attendees?: Array<{ email?: string; displayName?: string; self?: boolean; resource?: boolean }>;
 }
 

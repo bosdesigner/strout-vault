@@ -1,0 +1,39 @@
+# Where recordings file themselves by title, before anyone looks at them.
+#
+# The worker checks every Zoom and Meet recording without a workspace (new ones as they arrive,
+# and the backlog) against these rules, top to bottom. The first rule with a matching title files
+# the recording under its workspace. Nothing matched means it stays unassigned and goes through
+# the people on it instead (the participant resolver), or waits for you.
+#
+#   workspace   the workspace id it files under
+#   titles      regular expressions, case-insensitive, tried against the title
+#   sources     optional: only recordings from these sources (zoom, meet, upload, iphone_call)
+#   note        optional: why the rule exists
+#
+# Guardrails the rules cannot override:
+#   - phalanx is never assigned automatically, from here or anywhere else.
+#   - a recording that already has a workspace is never moved.
+#   - a filing you rejected on Review (that recording, that workspace) is never made again.
+#
+# Edit and save; the worker reads this file on every run. Add rules anywhere; order matters.
+
+rules:
+  - workspace: another_story
+    note: 'AnotherStory sales and onboarding calls, e.g. "Tanner Durfee: AnotherStory Assessment"'
+    titles:
+      - 'another\s?story'
+      - '\bassessments?\b'
+
+  - workspace: another_story
+    note: >-
+      Feasibility studies are AnotherStory's product (Ben, 2026-10-29): discovery calls,
+      onboardings and deliveries file here, not under strout_arch.
+    titles:
+      - 'feasibility'
+      - '\bdiscovery call\b'
+      - '\bonboarding\b'
+      - '\bdeliver(y|ies)\b'
+
+  # - workspace: strout_arch
+  #   titles: ['strout architecture', '\bdesign meeting\b']
+  #   sources: [zoom]

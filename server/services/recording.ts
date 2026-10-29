@@ -1,4 +1,5 @@
 import type pg from "pg";
+import { hasFactSources } from "../facts/store.ts";
 import type { StorageDriver } from "../storage/types.ts";
 import type { RecordingDetail, TranscriptLine, RoleChip } from "../../shared/types.ts";
 import { pickVideoSource, type PlayableCandidate } from "./videoSource.ts";
@@ -58,16 +59,29 @@ export async function getRecording(pool: pg.Pool, storage: StorageDriver, id: nu
       [id],
     ),
     pool.query(`select source, model, language, segment_count, word_count from transcripts where interaction_id = $1`, [id]),
-    pool.query(
-      `select f.id, f.kind, f.text, f.status, f.quote_start_sec, f.amount, f.due_date,
-              o.id as owner_id, o.name as owner_name, a.id as about_id, a.name as about_name
-       from facts f
-       left join parties o on o.id = f.owner_party_id
-       left join parties a on a.id = f.about_party_id
-       where f.interaction_id = $1
-       order by f.quote_start_sec nulls last, f.id`,
-      [id],
-    ),
+    (await hasFactSources(pool))
+      ? // Facts first said here, and facts first said elsewhere that this conversation repeats (fact_sources, 0013), at this conversation's moment.
+        pool.query(
+          `select f.id, f.kind, f.text, f.status, coalesce(fs.quote_start_sec, f.quote_start_sec) as quote_start_sec, coalesce(fs.quote, f.quote) as quote,
+                  f.amount, f.due_date, o.id as owner_id, o.name as owner_name, a.id as about_id, a.name as about_name
+           from facts f
+           left join lateral (select s.quote_start_sec, s.quote from fact_sources s where s.fact_id = f.id and s.interaction_id = $1 order by s.quote_start_sec nulls last limit 1) fs on true
+           left join parties o on o.id = f.owner_party_id
+           left join parties a on a.id = f.about_party_id
+           where f.interaction_id = $1 or exists (select 1 from fact_sources s where s.fact_id = f.id and s.interaction_id = $1)
+           order by 5 nulls last, f.id`,
+          [id],
+        )
+      : pool.query(
+          `select f.id, f.kind, f.text, f.status, f.quote_start_sec, null as quote, f.amount, f.due_date,
+                  o.id as owner_id, o.name as owner_name, a.id as about_id, a.name as about_name
+           from facts f
+           left join parties o on o.id = f.owner_party_id
+           left join parties a on a.id = f.about_party_id
+           where f.interaction_id = $1
+           order by f.quote_start_sec nulls last, f.id`,
+          [id],
+        ),
     pool.query(
       `select id, start_sec, end_sec, score, hook, why, status, clip_media_id from clip_candidates
        where interaction_id = $1 order by score desc, start_sec`,
@@ -178,6 +192,7 @@ export async function getRecording(pool: pg.Pool, storage: StorageDriver, id: nu
       text: f.text,
       status: f.status,
       quoteStartSec: f.quote_start_sec,
+      quote: f.quote ?? null,
       ownerParty: f.owner_id ? { id: f.owner_id, name: f.owner_name } : null,
       aboutParty: f.about_id ? { id: f.about_id, name: f.about_name } : null,
       amount: f.amount,

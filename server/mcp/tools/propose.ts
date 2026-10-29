@@ -9,7 +9,7 @@ import { deepLink, ToolError, type ToolContext, type ToolDef } from "./types.ts"
 const id = z.coerce.number().int().positive();
 const strList = z.array(z.string().trim().min(1).max(200)).max(20);
 const ROLE_VALUES = ["client", "contractor", "vendor", "partner", "investor", "team", "prospect", "advisor", "other"] as const;
-const FACT_KINDS = ["commitment", "decision", "price", "followup", "issue", "preference", "other"] as const;
+const FACT_KINDS = ["commitment", "task", "decision", "price", "followup", "issue", "preference", "other"] as const;
 
 export const PROPOSAL_SCHEMAS = {
   new_party: z
@@ -76,7 +76,7 @@ const schema = {
       "party_edit {party_id, changes: {name?, emails?, phones?, location?, website?, notes?}}; " +
       "link_party_interaction {party_id, interaction_id, speaker_label?, confidence?}; " +
       "link_project_interaction {project_id, interaction_id}; " +
-      "new_fact {interaction_id, kind: commitment|decision|price|followup|issue|preference|other, text, owner_party_id?, about_party_id?, project_id?, amount?, due_date?, quote_start_sec?, confidence?}; " +
+      "new_fact {interaction_id, kind: commitment|task|decision|price|followup|issue|preference|other, text, owner_party_id?, about_party_id?, project_id?, amount?, due_date?, quote_start_sec?, confidence?}; " +
       "new_relationship {from_party_id, to_party_id, kind, workspace_id?, notes?}.",
   ),
   reason: z.string().trim().min(1).max(1000).describe("Why this change is right, in one or two sentences, citing the recording and moment when there is one."),

@@ -15,6 +15,7 @@
 import crypto from "node:crypto";
 import type { WorkerContext } from "./context.ts";
 import { outOfTime } from "./context.ts";
+import { applyFilingRules, loadFilingRules } from "../workspaces/filing.ts";
 import { ARCHIVE_KINDS, ZoomClient, monthOf, monthsBefore, stripToken, type Recording, type RecordingFile } from "./zoom.ts";
 
 export interface SyncSummary {
@@ -45,9 +46,14 @@ export function zoomConfigured(ctx: WorkerContext): boolean {
   return !!(c.ZOOM_ACCOUNT_ID && c.ZOOM_CLIENT_ID && c.ZOOM_CLIENT_SECRET);
 }
 
+const zoomClients = new WeakMap<WorkerContext, ZoomClient>();
+
+/** One Zoom client (and token) per run, shared by the sync and the resolve step. */
 export function makeZoomClient(ctx: WorkerContext): ZoomClient {
+  const cached = zoomClients.get(ctx);
+  if (cached) return cached;
   const c = ctx.config;
-  return new ZoomClient({
+  const client = new ZoomClient({
     accountId: c.ZOOM_ACCOUNT_ID!,
     clientId: c.ZOOM_CLIENT_ID!,
     clientSecret: c.ZOOM_CLIENT_SECRET!,
@@ -57,6 +63,8 @@ export function makeZoomClient(ctx: WorkerContext): ZoomClient {
     sleep: ctx.sleep,
     now: ctx.now,
   });
+  zoomClients.set(ctx, client);
+  return client;
 }
 
 export async function syncZoom(ctx: WorkerContext, opts: { dryRun?: boolean } = {}): Promise<SyncSummary> {
@@ -286,6 +294,8 @@ export async function recordRecording(ctx: WorkerContext, rec: Recording): Promi
       );
       interactionId = ins.rows[0].id;
       created = true;
+      // File it by title right away (config/filing_rules.yml); the resolve step does the rest once it is transcribed.
+      await applyFilingRules(client, loadFilingRules(ctx.config.MESSAGES_CONFIG_DIR), { id: interactionId, title: rec.topic, source: "zoom" });
     }
     let filesQueued = 0;
     for (const f of files) {

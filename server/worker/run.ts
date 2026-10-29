@@ -4,15 +4,15 @@
 
 import os from "node:os";
 import type { WorkerContext } from "./context.ts";
-import { syncZoom, type SyncSummary } from "./sync.ts";
+import type { SyncSummary } from "./sync.ts";
 import { processTranscriptions, type TranscribeSummary } from "./transcribe.ts";
 import { processEmbeddings, type EmbedSummary } from "./embed.ts";
 import { processScouting, type ScoutSummary } from "./scout.ts";
-import { processExtraction, type ExtractSummary } from "./extract.ts";
+import { processExtraction, type ExtractOptions, type ExtractSummary } from "./extract.ts";
 import { processFollowthrough, type FollowthroughSummary } from "./followthrough.ts";
+import { processResolve, type ResolveOptions, type ResolveSummary } from "./resolve.ts";
+import { PULL_STEPS, pullAdapter } from "../ingest/adapters.ts";
 import { processLeads } from "./leads.ts";
-import { processGmail } from "./gmail.ts";
-import { processMeet } from "./meet.ts";
 import { refileInbox, type RefileSummary } from "../workspaces/refile.ts";
 import { loadMessageRules } from "../messages/rules.ts";
 import { ownerIdentity } from "../messages/identity.ts";
@@ -23,8 +23,12 @@ import { processCuts, type CutSummary } from "./cut.ts";
 import { buildReport, type PipelineReport } from "./report.ts";
 import { setState } from "./sync.ts";
 
-export type Step = "zoom" | "meet" | "leads" | "gmail" | "refile" | "transcribe" | "embed" | "extract" | "followthrough" | "scout" | "cut" | "report";
-export const ALL_STEPS: Step[] = ["zoom", "meet", "leads", "gmail", "refile", "transcribe", "embed", "extract", "followthrough", "scout", "cut", "report"];
+type CoreStep = "zoom" | "meet" | "leads" | "gmail" | "refile" | "transcribe" | "resolve" | "embed" | "extract" | "followthrough" | "scout" | "cut" | "report";
+/** A core step, or a pull adapter's step from server/ingest/adapters.ts. */
+export type Step = CoreStep | (string & {});
+const CORE_STEPS: CoreStep[] = ["zoom", "meet", "leads", "gmail", "refile", "transcribe", "resolve", "embed", "extract", "followthrough", "scout", "cut", "report"];
+// Pull adapters registered after the core sources run right after gmail, before refile and transcription.
+export const ALL_STEPS: Step[] = [...CORE_STEPS.slice(0, 4), ...PULL_STEPS.filter((s) => !(CORE_STEPS as string[]).includes(s)), ...CORE_STEPS.slice(4)];
 /**
  * Steps a run may do without the main worker lock: the 10-minute messages deployment runs
  * "gmail,embed" while the hourly run may still be transcribing. Each of those steps takes its
@@ -36,6 +40,9 @@ export interface RunOptions {
   trigger?: "schedule" | "manual" | "test";
   steps?: Step[];
   dryRun?: boolean;
+  /** Backfills: a date window and per-run sizes for the extract step, options for the resolve step. */
+  extract?: ExtractOptions;
+  resolve?: ResolveOptions;
 }
 
 export interface RunSummary {
@@ -48,6 +55,7 @@ export interface RunSummary {
   embed?: EmbedSummary;
   extract?: ExtractSummary;
   followthrough?: FollowthroughSummary;
+  resolve?: ResolveSummary;
   scout?: ScoutSummary;
   cut?: CutSummary;
   report?: PipelineReport;
@@ -161,14 +169,15 @@ export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Prom
     let ok = true;
     for (const step of steps) {
       try {
-        if (step === "zoom") summary.zoom = await syncZoom(ctx, { dryRun: opts.dryRun });
-        else if (step === "meet") summary.meet = await processMeet(ctx, { dryRun: opts.dryRun });
+        const adapter = pullAdapter(step);
+        // Pull sources (Zoom, Meet, Gmail, and any adapter added later); the summary key is the step name.
+        if (adapter?.run) (summary as unknown as Record<string, unknown>)[step] = await adapter.run(ctx, { dryRun: opts.dryRun });
         else if (step === "refile" && !opts.dryRun) summary.refile = await refileInbox(ctx.pool, loadMessageRules(ctx.config.MESSAGES_CONFIG_DIR), ownerIdentity(ctx.config));
         else if (step === "leads") summary.leads = await processLeads(ctx, { dryRun: opts.dryRun });
-        else if (step === "gmail") summary.gmail = await processGmail(ctx, { dryRun: opts.dryRun });
         else if (step === "transcribe" && !opts.dryRun) summary.transcribe = await processTranscriptions(ctx);
+        else if (step === "resolve") summary.resolve = await processResolve(ctx, { ...opts.resolve, dryRun: opts.dryRun || opts.resolve?.dryRun });
         else if (step === "embed" && !opts.dryRun) summary.embed = await processEmbeddings(ctx);
-        else if (step === "extract" && !opts.dryRun) summary.extract = await processExtraction(ctx);
+        else if (step === "extract" && !opts.dryRun) summary.extract = await processExtraction(ctx, opts.extract);
         else if (step === "followthrough" && !opts.dryRun) summary.followthrough = await processFollowthrough(ctx);
         else if (step === "scout" && !opts.dryRun) summary.scout = await processScouting(ctx);
         else if (step === "cut" && !opts.dryRun) summary.cut = await processCuts(ctx);
@@ -252,11 +261,18 @@ export function formatRunSummary(s: RunSummary): string {
         : `embed: off${e.candidates ? ` (${e.candidates} recording(s) waiting)` : ""}`,
     );
   }
+  if (s.resolve) {
+    const r = s.resolve;
+    const filed = Object.entries(r.filed);
+    lines.push(
+      `resolve: ${r.checked} recording(s)/call(s) checked, ${r.linked} participant link(s) (${r.partiesCreated} new part(ies), ${r.leadsLinked} lead(s)), ${r.suggested} suggested match(es); ${filed.length ? `filed ${filed.map(([k, v]) => `${k} ${v}`).join(", ")}` : "none filed"}; zoom participants ${r.zoomApi}, calendar ${r.calendar}${r.dryRun ? " (dry run, nothing kept)" : ""}${r.stoppedEarly ? `; stopped early: ${r.stoppedEarly}` : ""}`,
+    );
+  }
   if (s.extract) {
     const x = s.extract;
     lines.push(
       x.configured
-        ? `extract: ${x.read}/${x.candidatesRecordings + (x.candidatesThreads ?? 0)} item(s) read (${x.threads ?? 0} thread(s), ${x.unfiled ?? 0} unfiled${x.filingProposals ? `, ${x.filingProposals} filing(s) queued` : ""}), queued ${x.queued.facts} fact(s), ${x.queued.speakers} speaker match(es), ${x.queued.projects} project link(s); ${x.waitingOnBudget} waiting on budget, ${x.failed} failed, $${x.spentUsd.toFixed(3)} spent${x.stoppedEarly ? `; stopped early: ${x.stoppedEarly}` : ""}`
+        ? `extract: ${x.read}/${x.candidatesRecordings + (x.candidatesThreads ?? 0)} item(s) read (${x.threads ?? 0} thread(s), ${x.unfiled ?? 0} unfiled${x.filingProposals ? `, ${x.filingProposals} filing(s) queued` : ""}), ${x.written?.facts ?? 0} fact(s) written (${x.written?.merged ?? 0} merged into ones on record), queued ${x.queued.facts} fact(s), ${x.queued.speakers} speaker match(es), ${x.queued.projects} project link(s); ${x.waitingOnBudget} waiting on budget, ${x.failed} failed, $${x.spentUsd.toFixed(3)} spent${x.stoppedEarly ? `; stopped early: ${x.stoppedEarly}` : ""}`
         : `extract: off${x.candidatesRecordings || x.candidatesThreads ? ` (${x.candidatesRecordings} recording(s)${x.candidatesThreads ? ` and ${x.candidatesThreads} thread(s)` : ""} waiting)` : ""}`,
     );
   }
@@ -288,7 +304,7 @@ export function formatRunSummary(s: RunSummary): string {
     );
   }
   // Per-item errors from each step, a few of them: the full lists live in the run's summary JSON.
-  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.meet?.errors ?? []), ...(s.leads?.errors ?? []), ...(s.gmail?.errors ?? []), ...(s.gmail?.ingest.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.embed?.errors ?? []), ...(s.extract?.errors ?? []), ...(s.followthrough?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
+  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.meet?.errors ?? []), ...(s.leads?.errors ?? []), ...(s.gmail?.errors ?? []), ...(s.gmail?.ingest.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.resolve?.errors ?? []), ...(s.embed?.errors ?? []), ...(s.extract?.errors ?? []), ...(s.followthrough?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
   if (itemErrors.length) {
     const shown = itemErrors.slice(0, 3);
     lines.push(`errors: ${shown.join(" | ")}${itemErrors.length > shown.length ? ` | …and ${itemErrors.length - shown.length} more` : ""}`);

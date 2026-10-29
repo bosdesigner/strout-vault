@@ -72,6 +72,13 @@ export default function RecordingPage() {
       setNewLabel("");
     },
   });
+  // Done / Undo on a fact: keeps the open-commitments list trustworthy.
+  const setFactStatus = useMutation({
+    mutationFn: (body: { id: number; status: "open" | "done" }) => api(`/facts/${body.id}`, { method: "PATCH", json: { status: body.status } }),
+    onSuccess: (_data, body) => {
+      qc.setQueryData<RecordingDetail>(["recording", recId], (old) => (old ? { ...old, facts: old.facts.map((f) => (f.id === body.id ? { ...f, status: body.status } : f)) } : old));
+    },
+  });
   const linkProject = useMutation({
     mutationFn: (projectId: number) => api<RecordingDetail>(`/interactions/${recId}/projects`, { method: "POST", json: { projectId } }),
     onSuccess: (data) => {
@@ -298,26 +305,39 @@ export default function RecordingPage() {
                 ) : (
                   <ul className="space-y-1.5">
                     {r.facts.map((f) => (
-                      <li key={f.id}>
+                      <li key={f.id} className="flex items-start gap-2" data-testid={`fact-${f.id}`}>
                         <button
                           type="button"
                           onClick={() => f.quoteStartSec != null && seek(f.quoteStartSec)}
                           disabled={f.quoteStartSec == null}
-                          className="flex w-full items-start gap-3 rounded-md border px-3 py-2 text-left text-sm hover:bg-accent/50 disabled:hover:bg-transparent"
+                          className={cn("flex min-w-0 flex-1 items-start gap-3 rounded-md border px-3 py-2 text-left text-sm hover:bg-accent/50 disabled:hover:bg-transparent", f.status && f.status !== "open" && "opacity-60")}
                         >
                           <span className="mt-0.5 w-11 shrink-0 text-xs tabular text-muted-foreground">{f.quoteStartSec != null ? formatTimestamp(f.quoteStartSec) : ""}</span>
                           <span className="min-w-0 flex-1">
                             <span className="mr-2 inline-block"><Badge variant={f.status === "open" ? "warning" : "muted"}>{f.kind}</Badge></span>
                             {f.text}
-                            {(f.ownerParty || f.dueDate) && (
+                            {f.quote && <span className="mt-0.5 block text-xs italic text-muted-foreground">“{f.quote}”</span>}
+                            {(f.ownerParty || f.dueDate || (f.status && f.status !== "open")) && (
                               <span className="mt-0.5 block text-xs text-muted-foreground">
-                                {f.ownerParty?.name}
-                                {f.ownerParty && f.dueDate ? " · " : ""}
-                                {f.dueDate ? `due ${f.dueDate}` : ""}
+                                {[f.ownerParty?.name, f.dueDate ? `due ${f.dueDate}` : null, f.status && f.status !== "open" ? f.status : null].filter(Boolean).join(" · ")}
                               </span>
                             )}
                           </span>
                         </button>
+                        {owner && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 shrink-0"
+                            disabled={setFactStatus.isPending}
+                            onClick={() => setFactStatus.mutate({ id: f.id, status: f.status === "open" || !f.status ? "done" : "open" })}
+                            data-testid={`fact-${f.id}-toggle`}
+                            aria-label={f.status === "open" || !f.status ? `Mark done: ${f.text}` : `Reopen: ${f.text}`}
+                          >
+                            {f.status === "open" || !f.status ? <><Check className="h-3.5 w-3.5" /> Done</> : "Undo"}
+                          </Button>
+                        )}
                       </li>
                     ))}
                   </ul>
