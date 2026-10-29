@@ -518,13 +518,19 @@ export async function processExtraction(ctx: WorkerContext): Promise<ExtractSumm
     return summary;
   }
   const workspaces = await extractWorkspaces(ctx.pool, ctx.config.EXTRACT_WORKSPACES);
-  const recordings = await recordingJobs(ctx, workspaces);
-  const unfiled = await unfiledJobs(ctx, workspaces, ctx.config.EXTRACT_MAX_PER_RUN - recordings.length);
+  // Filed and unfiled recordings compete on date: the run reads the newest EXTRACT_MAX_PER_RUN of
+  // both together, so yesterday's unfiled sales call never waits behind the backlog of old filed ones.
+  const newestFirst = (a: Job, b: Job) => b.at - a.at || b.id - a.id;
+  const picked = [...(await recordingJobs(ctx, workspaces)), ...(await unfiledJobs(ctx, workspaces, ctx.config.EXTRACT_MAX_PER_RUN))]
+    .sort(newestFirst)
+    .slice(0, ctx.config.EXTRACT_MAX_PER_RUN);
+  const recordings = picked.filter((j) => j.kind === "recording");
+  const unfiled = picked.filter((j) => j.kind === "unfiled");
   const threads = await threadJobs(ctx, workspaces);
-  summary.candidatesRecordings = recordings.length + unfiled.length;
+  summary.candidatesRecordings = picked.length;
   summary.candidatesThreads = threads.length;
   // Threads first (they are what is waiting on a reply), then recordings newest first.
-  const jobs = [...threads, ...[...recordings, ...unfiled].sort((a, b) => b.at - a.at || b.id - a.id)];
+  const jobs = [...threads, ...picked];
   if (!jobs.length) return summary;
   if (!summary.configured) {
     ctx.log(`extract: ${recordings.length + unfiled.length} recording(s) and ${threads.length} thread(s) waiting; extraction is off until EXTRACT_MONTHLY_BUDGET_USD is set`);

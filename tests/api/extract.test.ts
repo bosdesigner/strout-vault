@@ -397,4 +397,22 @@ describe("texts, email and unfiled recordings (step 5 B)", () => {
     const read = await pool.query(`select id from interactions where id = any($1::bigint[]) and extracted_at is not null`, [[rejected, investor, later]]);
     expect(read.rows.map((x) => Number(x.id))).toEqual([later]);
   });
+
+  it("reads the newest recordings first, filed or not, so a new unfiled call never waits behind an old filed backlog", async () => {
+    // An old filed recording waiting, and yesterday's unfiled assessment call; room for one.
+    const old = await one<{ id: string }>(`select id from interactions where workspace_id = 'strout_arch' and kind <> all('{text_thread,email_thread}') order by occurred_at asc limit 1`);
+    await pool.query(`update interactions set extracted_at = null, occurred_at = $2 where id = $1`, [old.id, new Date(Date.now() - 300 * day)]);
+    const fresh = await addInteraction({ workspace_id: null, kind: "meeting", title: "Robin Newcall: AnotherStory Assessment", occurred_at: new Date(Date.now() - day) });
+    await addSegments(fresh, [[0, 5, "Speaker 1", "Thanks for booking, Robin."]]);
+
+    const r = await runWorker(makeCtx(config({ EXTRACT_MAX_PER_RUN: "1" })), { trigger: "test", steps: ["extract"] });
+    expect(r.summary.extract).toMatchObject({ candidatesRecordings: 1, read: 1, unfiled: 1 });
+    expect((await one(`select extracted_at from interactions where id = $1`, [fresh])).extracted_at).not.toBeNull();
+    expect((await one(`select extracted_at from interactions where id = $1`, [old.id])).extracted_at).toBeNull();
+
+    // Next run, the old one gets its turn.
+    const next = await runWorker(makeCtx(config({ EXTRACT_MAX_PER_RUN: "1" })), { trigger: "test", steps: ["extract"] });
+    expect(next.summary.extract).toMatchObject({ read: 1, unfiled: 0 });
+    expect((await one(`select extracted_at from interactions where id = $1`, [old.id])).extracted_at).not.toBeNull();
+  });
 });
