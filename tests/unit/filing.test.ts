@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import path from "node:path";
-import { displayName, isFuzzyNameMatch, isOwnerName, normalizeName, parseTitleNames } from "../../server/participants/names.ts";
+import { displayName, isFuzzyNameMatch, isOwnerName, normalizeName, parseTitleNames, parseTitleNamesDetailed } from "../../server/participants/names.ts";
 import { loadFilingRules, matchFilingRule, normalizeTitle, parseFilingRules } from "../../server/workspaces/filing.ts";
 
 const rules = loadFilingRules(path.resolve(__dirname, "../../config"));
@@ -28,12 +28,50 @@ describe("parseTitleNames", () => {
     expect(parseTitleNames("Intro call with Ben and Marianne")).toEqual(["Marianne"]);
     expect(parseTitleNames("Call with Barry Harwell · 2026-10-27")).toEqual(["Barry Harwell"]);
     expect(parseTitleNames("Naaim Masri")).toEqual(["Naaim Masri"]);
+    // A company in the phone's contacts is not a person.
+    expect(parseTitleNames("Call with Besco Steel · 2024-12-02")).toEqual([]);
+    expect(parseTitleNames("Call with Gulf Coast Millwork")).toEqual([]);
   });
 
   it("finds no one in account-default and topic titles", () => {
     for (const t of ["Ben Strout's Zoom Meeting", "Another Story's Zoom Meeting", "Call Recording", "Executive Meeting - Monday Planning & Prayer", "Weekly Q&A Classes - Drawing Before and After Home Design in Real Time!", "TikTok live ", "Road map Zoom call", "team meeting ", "Kitchen walkthrough", "Pinson site walk", "", null]) {
       expect(parseTitleNames(t as string | null)).toEqual([]);
     }
+  });
+});
+
+describe("titles from the production backlog (2026-10-29 dry run)", () => {
+  it("names a person firmly only in a deliberate shape; free text only ever matches someone known", () => {
+    expect(parseTitleNamesDetailed("Tanner Durfee: AnotherStory Assessment")).toEqual([{ name: "Tanner Durfee", strong: true }]);
+    expect(parseTitleNamesDetailed("Amber Autumn, Feasibility Study Discovery Call is Confirmed!")).toEqual([{ name: "Amber Autumn", strong: true }]);
+    expect(parseTitleNamesDetailed("Meeting with John Tabor")).toEqual([{ name: "John Tabor", strong: true }]);
+    expect(parseTitleNamesDetailed("Daniel Hardwick  and Benjamin Strout")).toEqual([{ name: "Daniel Hardwick", strong: false }]);
+    expect(parseTitleNamesDetailed("Andrew Thomson Feasibility Study Onboarding Meeting")).toEqual([{ name: "Andrew Thomson", strong: false }]);
+  });
+
+  it("drops topics, possessives of Ben, run-together names and one-word projects", () => {
+    for (const t of [
+      "Ben Strout's with the Nolen's",
+      "Ben Strout's VA Interview",
+      "Call with Dust Development",
+      "Balyeat Feasibility Study Delivery",
+      "Danley discussion",
+      "Bratcher Review",
+      "Review Schilleci Feasibility Study",
+      "Next Steps",
+      "AnotherStory Intake",
+      "Call with Dust Development",
+      "Greensport Baptist Church review",
+      "Ask an architect: 30 min discovery ",
+    ]) {
+      expect(parseTitleNames(t), t).toEqual([]);
+    }
+    expect(parseTitleNames("Tanner Durfee Next Steps: pricing")).toEqual(["Tanner Durfee"]);
+    // Only "John" survives, as a weak one-word name, which the resolver never links (tests/api/phase1.test.ts).
+    expect(parseTitleNamesDetailed("Brad Jeremy Ben and John ")).toEqual([{ name: "John", strong: false }]);
+    // Free text can still yield a weak two-word name; it is only ever matched, never created.
+    expect(parseTitleNamesDetailed("Claudio Jeremy and Ben ")).toEqual([{ name: "Claudio Jeremy", strong: false }]);
+    expect(isOwnerName("Ben Strout's")).toBe(true);
   });
 });
 

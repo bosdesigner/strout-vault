@@ -25,7 +25,7 @@ import type pg from "pg";
 import { matchParties, NEVER_AUTO_ASSIGNED, INBOX, routeThread, type PartyRef } from "../messages/ingest.ts";
 import { normalizeEmail, normalizeIdentifier, isOwner, type OwnerIdentity } from "../messages/identity.ts";
 import type { MessageRules } from "../messages/rules.ts";
-import { displayName, isFuzzyNameMatch, isOwnerName, looksLikeName, normalizeName, parseTitleNames } from "./names.ts";
+import { displayName, isFuzzyNameMatch, isOwnerName, looksLikeName, normalizeName, parseTitleNamesDetailed } from "./names.ts";
 import { matchFilingRule, rejectedWorkspaces, WORKSPACE_DECISION_TYPES, type FilingRule } from "../workspaces/filing.ts";
 
 export type CandidateSource = "zoom_api" | "calendar" | "contact" | "title" | "transcript";
@@ -37,6 +37,8 @@ export interface Candidate {
   phone?: string | null;
   /** Already matched upstream (the device ingest's contact match). */
   partyId?: number | null;
+  /** Title names only: the title names this person on purpose ("<Name>: …"), so a new party may be made. */
+  strong?: boolean;
   via: CandidateSource;
 }
 
@@ -192,7 +194,7 @@ export async function gatherCandidates(db: pg.Pool | pg.PoolClient, deps: Resolv
       via: "contact",
     });
   }
-  for (const name of parseTitleNames(row.title, deps.ownerNames)) out.push({ name, email: null, via: "title" });
+  for (const n of parseTitleNamesDetailed(row.title, deps.ownerNames)) out.push({ name: n.name, email: null, via: "title", strong: n.strong });
   const { rows } = await db.query(`select distinct speaker from segments where interaction_id = $1 and speaker is not null limit 40`, [row.id]);
   for (const r of rows) {
     const s = String(r.speaker).trim();
@@ -308,6 +310,11 @@ export async function resolveInteraction(db: pg.Pool | pg.PoolClient, deps: Reso
     const key = normalizeName(c.name);
     if (handledNames.has(key)) continue;
     handledNames.add(key);
+    // A first name alone from free text ("John" in "Brad Jeremy Ben and John") is never matched to anyone.
+    if (c.via === "title" && !c.strong && key.split(" ").length < 2) {
+      result.unresolved.push(c.name);
+      continue;
+    }
     const exact = index.exact(c.name);
     const pick = exact.length === 1 ? exact[0] : exact.filter((p) => p.isLead).length === 1 ? exact.find((p) => p.isLead)! : null;
     if (pick) {
@@ -325,8 +332,10 @@ export async function resolveInteraction(db: pg.Pool | pg.PoolClient, deps: Reso
       }
       continue;
     }
-    // Nothing matches: a full name becomes a new person; a first name alone ("Devon") stays unresolved.
-    if (key.split(" ").length >= 2 && (c.via === "title" || c.via === "contact" || c.via === "zoom_api" || c.via === "calendar")) {
+    // Nothing matches: a full name becomes a new person, but only from a source that names people on
+    // purpose (a contact card, Zoom, a calendar guest, a title in a "<Name>: …" shape). A first name
+    // alone ("Devon") or a name picked out of free text stays unresolved.
+    if (key.split(" ").length >= 2 && ((c.via === "title" && c.strong) || c.via === "contact" || c.via === "zoom_api" || c.via === "calendar")) {
       const created = await createParty(db, c, row.id);
       index.add({ id: created.id, name: created.name });
       await link(created.id, created.name, c, "created", 0.8);

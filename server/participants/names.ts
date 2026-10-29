@@ -45,6 +45,7 @@ export function normalizeName(name: string | null | undefined): string {
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
+    .replace(/['’]s\b/g, "") // "Ben Strout's" is Ben
     .replace(/[^a-z\s'-]/g, " ")
     .replace(/['-]/g, "")
     .split(/\s+/)
@@ -83,8 +84,17 @@ export function looksLikeName(s: string): boolean {
   if (!n || NOT_A_NAME.has(n)) return false;
   const words = n.split(" ");
   if (words.length > 4) return false;
+  if (words.some((w) => ORG_WORDS.has(w) || FUNCTION_WORDS.has(w))) return false;
   return words.every((w) => /^[a-z]+$/.test(w)) && !words.some((w) => ["meeting", "call", "zoom", "assessment", "story", "training", "coaching", "branding", "content", "class", "classes", "live", "planning", "prayer"].includes(w));
 }
+
+/** Words that make a contact or title a company, not a person ("Besco Steel", "Gulf Coast Millwork"). */
+const ORG_WORDS = new Set(
+  "llc inc co corp company development developments architect companies group steel construction constructions builders builder building buildings homes home roofing roof plumbing electric electrical supply supplies services service solutions bank insurance realty properties property designs design studio studios millwork lumber concrete windows doors cabinets flooring hvac pools landscaping capital partners ventures holdings associates architecture architects engineering contracting contractors restoration remodeling exteriors interiors decks pharmacy drugs clinic dental medical school church university office team crew".split(" "),
+);
+
+/** Small words no name contains ("Ask an architect", "Ian of the CQC Home Team"). */
+const FUNCTION_WORDS = new Set("a an the of to for with about my our your his her their from at by on in is are was".split(" "));
 
 /** Splits "A, B and C" / "A & B" into names. */
 function splitNames(s: string): string[] {
@@ -94,43 +104,77 @@ function splitNames(s: string): string[] {
     .filter(Boolean);
 }
 
+/** Words that describe the meeting, not the person: trailing ones are cut ("Tanner Durfee Next Steps"). */
+const TOPIC_WORDS = new Set(
+  "next steps step discussion discuss review reviews feasibility study studies delivery delivered onboarding meeting meetings kickoff kick off follow followup up catch intro introduction consultation consult assessment anotherstory another story fs proposal project projects presentation interview va call chat sync update check in walkthrough walk through planning plan kick-off session training coaching class zoom design scope agreement confirmed discovery".split(" "),
+);
+
+function stripTopic(name: string): string {
+  const words = name.split(/\s+/);
+  while (words.length && TOPIC_WORDS.has(words[words.length - 1].toLowerCase().replace(/[^a-z-]/g, ""))) words.pop();
+  return words.join(" ");
+}
+
+export interface TitleName {
+  name: string;
+  /**
+   * The title is in a shape that names the person on purpose ("<Name>: …", "<Name>, Feasibility Study
+   * …", "Call with <Name>", "Meeting with <Name>"): enough to create a new person. A weak name (picked
+   * out of free text such as "Brad Jeremy Ben and John") only ever matches someone already known.
+   */
+  strong: boolean;
+}
+
 /**
- * The people a recording title names, Ben left out. Recognises the shapes Ben's calendar and
- * Zoom produce: "<Name>: <topic>", "<Name> and Ben Strout", "Ben and <Name>", "Meeting with
- * <Name>", "Call with <Name> · 2026-10-27", "<Name> <> Ben". Returns display-cased names,
- * each at most once.
+ * The people a recording title names, Ben left out, with how firmly the title names them. Shapes:
+ * "<Name>: <topic>" (stray space before the colon allowed), "<Name>, <topic>", "Call with <Name> ·
+ * 2026-10-27", "Meeting with <Name>", and, weakly, "<Name> and Ben Strout", "Ben and <Name> about …",
+ * "<Name> Feasibility Study Delivery". Topic words at the end of a name are cut; a candidate starting
+ * with one ("Review Ketcham") is dropped; companies are never people.
  */
-export function parseTitleNames(title: string | null | undefined, ownerNames: string[] = DEFAULT_OWNER_NAMES): string[] {
+export function parseTitleNamesDetailed(title: string | null | undefined, ownerNames: string[] = DEFAULT_OWNER_NAMES): TitleName[] {
   let t = (title ?? "").replace(/\s+/g, " ").replace(/\s+([:,;])/g, "$1").trim();
   if (!t) return [];
   // The device ingest's own titles: "Call with Devon · 2026-10-28".
   t = t.replace(/\s+·\s+\d{4}-\d{2}-\d{2}.*$/, "").trim();
-  const candidates: string[] = [];
-  // Outside "<Name>: …" a candidate must be written like a name (Capitalized or ALL CAPS words), so a
-  // topic title ("Kitchen walkthrough", "team meeting") is never taken for a person.
-  let mustLookCapitalized = false;
+  const candidates: Array<{ text: string; strong: boolean }> = [];
   const colon = t.match(/^([^:]{2,80}):\s*\S/);
-  if (colon) candidates.push(...splitNames(colon[1]));
+  const comma = t.match(/^([A-Za-z][A-Za-z.'-]*(?: [A-Za-z][A-Za-z.'-]*){1,3}), \S/);
+  const withM = t.match(/^(?:(?:zoom |phone |intro )?(?:call|meeting|chat|intro|catch[- ]up|sync)|intro call)\s+with\s+(.{2,80}?)(?:\s+(?:about|to|re|regarding|for|on)\b.*)?$/i);
+  if (colon) candidates.push(...splitNames(colon[1]).map((text) => ({ text, strong: true })));
+  else if (withM) candidates.push(...splitNames(withM[1].replace(/\s*<>\s*/g, " and ")).map((text) => ({ text, strong: true })));
+  else if (comma && !/\band\b/i.test(comma[1])) candidates.push({ text: comma[1], strong: true });
   else {
-    mustLookCapitalized = true;
-    const withM = t.match(/\b(?:meeting|call|chat|zoom|intro(?:duction)?|catch[- ]up|sync)\s+(?:call\s+)?with\s+(.{2,80}?)(?:\s+(?:about|to|re|regarding|for|on)\b.*)?$/i);
-    const leading = t.match(/^(?:intro call with|intro with)\s+(.{2,80})$/i);
-    const about = t.match(/^(.{2,80}?)\s+(?:about|to discuss|to chat about|to meet about|to connect|re:?|regarding)\b/i);
-    const body = withM?.[1] ?? leading?.[1] ?? about?.[1] ?? t;
-    candidates.push(...splitNames(body.replace(/\s*<>\s*/g, " and ")));
+    const about = t.match(/^(.{2,80}?)\s+(?:about|to discuss|to chat about|to meet about|to talk about|to review|to connect|re:?|regarding|for)\b/i);
+    const mid = t.match(/\bwith\s+(.{2,80}?)(?:\s+(?:about|to|re|regarding|for|on)\b.*)?$/i);
+    const body = about?.[1] ?? mid?.[1] ?? t;
+    candidates.push(...splitNames(body.replace(/\s*<>\s*/g, " and ")).map((text) => ({ text, strong: false })));
   }
-  const out: string[] = [];
+  const out: TitleName[] = [];
   const seen = new Set<string>();
   for (const c of candidates) {
-    const name = c.replace(/^(?:mr|mrs|ms|dr)\.?\s+/i, "").replace(/[.'"]+$/, "").trim();
+    let name = c.text.replace(/^(?:mr|mrs|ms|dr)\.?\s+/i, "").replace(/[.'"!]+$/, "").trim();
+    const stripped = stripTopic(name);
+    // One word left in front of a topic ("Balyeat Feasibility Study", "Danley discussion") is a project or a surname, not a person.
+    if (stripped !== name && !stripped.includes(" ")) continue;
+    name = stripped;
+    if (!name || TOPIC_WORDS.has(name.split(/\s+/)[0].toLowerCase())) continue;
     if (!looksLikeName(name) || isOwnerName(name, ownerNames) || startsWithOwner(name, ownerNames)) continue;
-    if (mustLookCapitalized && !name.split(/\s+/).every((w) => /^[A-Z][A-Za-z'-]*$/.test(w))) continue;
+    // Free text must at least be written like a name (Capitalized or ALL CAPS), so "Kitchen walkthrough" is not a person.
+    if (!c.strong && !name.split(/\s+/).every((w) => /^[A-Z][A-Za-z'-]*$/.test(w))) continue;
+    // Free text that runs Ben's first name into others ("Nathan Ben", "Brad Jeremy Ben") is several people, not one.
+    if (!c.strong && name.split(/\s+/).some((w) => isOwnerName(w, ownerNames))) continue;
     const key = normalizeName(name);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push(displayName(name));
+    out.push({ name: displayName(name), strong: c.strong });
   }
   return out;
+}
+
+/** The names alone (see parseTitleNamesDetailed). */
+export function parseTitleNames(title: string | null | undefined, ownerNames: string[] = DEFAULT_OWNER_NAMES): string[] {
+  return parseTitleNamesDetailed(title, ownerNames).map((n) => n.name);
 }
 
 /** Levenshtein distance. */
