@@ -26,7 +26,7 @@ const sig = (over: Partial<ClassifySignals> = {}): ClassifySignals => ({
   ...over,
 });
 const llm = (workspace: string, confidence: number, phalanx_material = false): LlmVerdict => ({ workspace, confidence, reason: "test", phalanx_material });
-const decide = (s: ClassifySignals) => decideWorkspace(s, { minConfidence: 0.8, known: KNOWN });
+const decide = (s: ClassifySignals) => decideWorkspace(s, { known: KNOWN }); // defaults: 0.6 to file, 0.8 for phalanx
 
 describe("phalanx guard", () => {
   it("files to phalanx on a phalanx term in the title, whatever else points elsewhere", () => {
@@ -111,19 +111,21 @@ describe("routing without phalanx signals", () => {
 
   it("sends participant/content disagreement to review when Claude is very sure", () => {
     const p = [{ partyId: 2, name: "Kevin", workspaces: ["another_story"] }];
-    expect(decide(sig({ kind: "text_thread", participants: p, llm: llm("personal", 0.95) }))).toMatchObject({ workspaceId: "inbox", review: { suggested: "personal" } });
+    expect(decide(sig({ kind: "text_thread", current: "inbox", participants: p, llm: llm("personal", 0.95) }))).toMatchObject({ workspaceId: "inbox", changed: false, review: { suggested: "personal" } });
     expect(decide(sig({ kind: "text_thread", participants: p, llm: llm("personal", 0.8) }))).toMatchObject({ workspaceId: "another_story" });
   });
 
-  it("files on Claude alone at 0.8+, and leaves anything less in inbox (review only from 0.5)", () => {
-    expect(decide(sig({ kind: "note", llm: llm("personal", 0.82) }))).toMatchObject({ workspaceId: "personal", changed: true });
-    expect(decide(sig({ kind: "note", llm: llm("another_story", 0.7) }))).toMatchObject({ workspaceId: "inbox", review: { suggested: "another_story" } });
-    expect(decide(sig({ kind: "note", llm: llm("another_story", 0.3) }))).toMatchObject({ workspaceId: "inbox", review: null });
-    expect(decide(sig({ kind: "note" }))).toMatchObject({ workspaceId: "inbox", review: null, evidence: ["no signal"] });
+  it("files on Claude alone at 0.6+ (phalanx needs 0.8), and leaves anything less where it was (review from 0.4)", () => {
+    expect(decide(sig({ kind: "note", current: "inbox", llm: llm("personal", 0.62) }))).toMatchObject({ workspaceId: "personal", changed: true });
+    expect(decide(sig({ kind: "note", current: "inbox", llm: llm("another_story", 0.5) }))).toMatchObject({ workspaceId: "inbox", changed: false, review: { suggested: "another_story" } });
+    expect(decide(sig({ kind: "note", current: "inbox", llm: llm("another_story", 0.3) }))).toMatchObject({ workspaceId: "inbox", review: null });
+    expect(decide(sig({ kind: "note", current: "inbox" }))).toMatchObject({ workspaceId: "inbox", review: null, evidence: ["no signal"] });
+    expect(decide(sig({ kind: "note", current: "inbox", llm: llm("phalanx", 0.7) }))).toMatchObject({ workspaceId: "inbox", review: { suggested: "phalanx" } });
   });
 
-  it("moves an unassigned Zoom meeting it cannot file into inbox, and leaves filed items alone", () => {
-    expect(decide(sig({ current: null }))).toMatchObject({ workspaceId: "inbox", changed: true });
+  it("leaves an unassigned Zoom meeting it cannot file unassigned (still readable as 'unassigned'), and filed items alone", () => {
+    expect(decide(sig({ current: null }))).toMatchObject({ changed: false });
+    expect(decide(sig({ current: null, llm: llm("another_story", 0.45) }))).toMatchObject({ changed: false, review: { suggested: "another_story" } });
     expect(decide(sig({ current: "strout_arch", llm: llm("personal", 0.99) }))).toMatchObject({ workspaceId: "strout_arch", changed: false });
     expect(decide(sig({ current: "inbox", humanFiled: true, llm: llm("personal", 0.99) }))).toMatchObject({ changed: false });
   });

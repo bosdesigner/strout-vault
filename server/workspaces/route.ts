@@ -19,6 +19,8 @@
 export const FILE_WORKSPACES = ["another_story", "strout_arch", "phalanx", "southern_shutter", "sepp", "credvault", "personal"] as const;
 export type FileWorkspace = (typeof FILE_WORKSPACES)[number];
 export const INBOX_WS = "inbox";
+/** Phalanx files only at this confidence or more; below it the item waits in inbox for Ben. */
+export const PHALANX_MIN = 0.8;
 
 /** Strong phalanx terms: one in a title, or two lines of text, files to phalanx on its own. */
 export const PHALANX_STRONG: RegExp[] = [/\bphalanx/i, /\bshingle[\s-]?x\b/i, /\bdermatryx\b/i, /\bdermal[\s-]?x\b/i, /\bmill\s?pond\b/i];
@@ -98,7 +100,10 @@ export interface ClassifyDecision {
 }
 
 export interface DecideOptions {
+  /** Filing into a readable workspace (default 0.6: a wrong guess there stays inside Ben's own scope). */
   minConfidence?: number;
+  /** Filing into phalanx (default 0.8, fixed by the Phase 1 brief). */
+  phalanxMin?: number;
   known?: ReadonlySet<string>;
 }
 
@@ -106,7 +111,8 @@ const isFileWs = (ws: string | null | undefined, known?: ReadonlySet<string>): w
   !!ws && (FILE_WORKSPACES as readonly string[]).includes(ws) && (!known || known.has(ws));
 
 export function decideWorkspace(s: ClassifySignals, opts: DecideOptions = {}): ClassifyDecision {
-  const min = opts.minConfidence ?? 0.8;
+  const min = opts.minConfidence ?? 0.6;
+  const phalanxMin = opts.phalanxMin ?? PHALANX_MIN;
   const filed = !!s.current && s.current !== INBOX_WS;
   const keep = (why: string[]): ClassifyDecision => ({ interactionId: s.interactionId, workspaceId: s.current ?? INBOX_WS, confidence: 0, evidence: why, changed: false, review: null, phalanx: false });
   const to = (ws: string, confidence: number, evidence: string[], review: ClassifyDecision["review"] = null, phalanx = false): ClassifyDecision => ({
@@ -117,6 +123,18 @@ export function decideWorkspace(s: ClassifySignals, opts: DecideOptions = {}): C
     changed: ws !== (s.current ?? null),
     review,
     phalanx,
+  });
+
+  // Nothing confident: the item stays where it is (inbox, or unassigned for a Zoom meeting, which the
+  // connector can read when its scope lists "unassigned"); only the phalanx guard moves things to inbox.
+  const stay = (confidence: number, evidence: string[], review: ClassifyDecision["review"] = null): ClassifyDecision => ({
+    interactionId: s.interactionId,
+    workspaceId: s.current ?? INBOX_WS,
+    confidence: Number(Math.min(0.99, confidence).toFixed(2)),
+    evidence,
+    changed: false,
+    review,
+    phalanx: false,
   });
 
   // 1. Phalanx guard.
@@ -159,10 +177,10 @@ export function decideWorkspace(s: ClassifySignals, opts: DecideOptions = {}): C
     } else if (s.llm?.phalanx_material) {
       conf = Math.max(conf, 0.6);
       ev.push(`Claude saw phalanx material, filed it as ${s.llm.workspace}: ${s.llm.reason}`);
-    } else if (s.llm && conf < min) {
+    } else if (s.llm && conf < phalanxMin) {
       ev.push(`Claude: ${s.llm.workspace} (${Math.round(s.llm.confidence * 100)}%): ${s.llm.reason}`);
     }
-    if (conf >= min && (!opts.known || opts.known.has("phalanx"))) return to("phalanx", conf, ev, null, true);
+    if (conf >= phalanxMin && (!opts.known || opts.known.has("phalanx"))) return to("phalanx", conf, ev, null, true);
     // Borderline: never filed anywhere but phalanx. Out of a readable workspace, into inbox, for Ben.
     return to(INBOX_WS, conf, ev, { suggested: "phalanx", reason: `Possible Phalanx material (${Math.round(conf * 100)}%): ${ev.join("; ")}` }, true);
   }
@@ -196,7 +214,7 @@ export function decideWorkspace(s: ClassifySignals, opts: DecideOptions = {}): C
   if (partVote && llm) {
     if (partVote.ws === llmWs) return to(partVote.ws, Math.max(partVote.conf, llm.confidence) + 0.05, [`participants ${partVote.ev}`, llmEv!]);
     if (llm.confidence >= 0.9 && partVote.conf < 0.9) {
-      return to(INBOX_WS, llm.confidence, [`participants ${partVote.ev}`, llmEv!], { suggested: llmWs!, reason: `Participants say ${partVote.ws}, content says ${llmWs}: ${llm.reason}` });
+      return stay(llm.confidence, [`participants ${partVote.ev}`, llmEv!], { suggested: llmWs!, reason: `Participants say ${partVote.ws}, content says ${llmWs}: ${llm.reason}` });
     }
     return to(partVote.ws, partVote.conf - 0.05, [`participants ${partVote.ev}`, `${llmEv} (overruled)`]);
   }
@@ -205,7 +223,7 @@ export function decideWorkspace(s: ClassifySignals, opts: DecideOptions = {}): C
     if (llm.confidence >= min) return to(llmWs, llm.confidence, [llmEv!]);
     const ev = [llmEv!];
     if (pWs.size > 1) ev.push(`participants span ${[...pWs].join(", ")}`);
-    return to(INBOX_WS, llm.confidence, ev, llm.confidence >= 0.5 ? { suggested: llmWs, reason: `Probably ${llmWs} (${Math.round(llm.confidence * 100)}%): ${llm.reason}` } : null);
+    return stay(llm.confidence, ev, llm.confidence >= 0.4 ? { suggested: llmWs, reason: `Probably ${llmWs} (${Math.round(llm.confidence * 100)}%): ${llm.reason}` } : null);
   }
-  return to(INBOX_WS, 0, [pWs.size > 1 ? `participants span ${[...pWs].join(", ")}` : "no signal"]);
+  return stay(0, [pWs.size > 1 ? `participants span ${[...pWs].join(", ")}` : "no signal"]);
 }

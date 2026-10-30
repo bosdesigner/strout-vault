@@ -112,8 +112,9 @@ const envSchema = z.object({
   CLASSIFY_MONTHLY_BUDGET_USD: z.coerce.number().min(0).default(0),
   CLASSIFY_MAX_PER_RUN: z.coerce.number().int().positive().default(400),
   CLASSIFY_BATCH: z.coerce.number().int().min(1).max(25).default(10),
-  // Claude's read files an item at this confidence or more; below it the item stays in inbox.
-  CLASSIFY_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.8),
+  // Claude's read files an item into a readable workspace at this confidence or more; below it the item
+  // stays where it is (inbox or unassigned) with a review item. Phalanx always needs 0.8 (route.ts).
+  CLASSIFY_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.6),
   // ---- People linking (Phase 1 v2): worker step `link` ----
   LINK_MAX_PER_RUN: z.coerce.number().int().positive().default(500),
   // ---- Follow-through (Jarvis step 5 C, docs/FOLLOW-THROUGH.md) ----

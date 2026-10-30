@@ -55,7 +55,7 @@ const fetchImpl: typeof fetch = async (input, init) => {
       if (/dermatryx|wound care trial/i.test(item)) return { id: Number(id), workspace: "phalanx", confidence: 0.9, reason: "phalanx product", phalanx_material: true, other_party: null };
       if (/\bmom\b|soccer practice/i.test(item)) return { id: Number(id), workspace: "personal", confidence: 0.92, reason: "family", phalanx_material: false, other_party: null };
       if (/kitchen addition|permit set/i.test(item)) return { id: Number(id), workspace: "strout_arch", confidence: 0.86, reason: "design client", phalanx_material: false, other_party: /this is Kevin/i.test(item) ? "Kevin McGuire" : null };
-      return { id: Number(id), workspace: "another_story", confidence: 0.55, reason: "unclear", phalanx_material: false, other_party: null };
+      return { id: Number(id), workspace: "another_story", confidence: 0.45, reason: "unclear", phalanx_material: false, other_party: null };
     });
     return reply({ items });
   }
@@ -191,7 +191,7 @@ describe("classify step", () => {
     expect((await row(ids.family)).workspace_id).toBe("personal");
     expect((await row(ids.zoomKitchen)).workspace_id).toBe("strout_arch");
     expect((await row(ids.zoomKitchen)).classify_model).toBe("claude-opus-5-5");
-    expect((await row(ids.vague)).workspace_id).toBe("inbox"); // 0.55: not filed
+    expect((await row(ids.vague)).workspace_id).toBeNull(); // 0.45: not filed, stays unassigned with a review item
     // A passing "Shingle X" in an AnotherStory onboarding: out of another_story, into inbox, with a phalanx review item.
     expect((await row(ids.passing)).workspace_id).toBe("inbox");
     const review = await pool.query(`select proposal from review_queue where interaction_id = $1 and item_type = 'interaction_workspace' and status = 'open'`, [ids.passing]);
