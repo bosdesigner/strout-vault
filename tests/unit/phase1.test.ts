@@ -36,7 +36,7 @@ describe("phalanx guard", () => {
   });
 
   it("files to phalanx on two or more lines naming Phalanx, Dermatryx, Dermal X or Millpond", () => {
-    for (const term of ["Phalanx", "Dermatryx", "Dermal X", "Millpond", "mill pond"]) {
+    for (const term of ["Phalanx", "Dermatryx", "Dermal X", "Millpond", "mill pond", "wound care"]) {
       expect(phalanxTerms(`we talked about ${term} today`).strong.length, term).toBe(1);
     }
     expect(decide(sig({ phalanxLines: { strong: 2, weak: 0 } }))).toMatchObject({ workspaceId: "phalanx", phalanx: true });
@@ -53,8 +53,8 @@ describe("phalanx guard", () => {
     expect(decide(sig({ phalanxLines: { strong: 1, weak: 0 }, llm: llm("phalanx", 0.85) }))).toMatchObject({ workspaceId: "phalanx" });
   });
 
-  it("treats wound care and cap-table material as phalanx-only: inbox unless Claude says phalanx", () => {
-    for (const t of ["the wound care trial", "send me the cap table", "term sheet attached", "our pre-money valuation", "investor update for Q3"]) {
+  it("treats cap-table and investor material as phalanx-only: inbox unless Claude says phalanx", () => {
+    for (const t of ["send me the cap table", "term sheet attached", "our pre-money valuation", "investor update for Q3"]) {
       expect(phalanxTerms(t).weak.length, t).toBeGreaterThan(0);
     }
     const borderline = decide(sig({ kind: "email_thread", account: "ben@anotherstory.com", phalanxLines: { strong: 0, weak: 1 }, llm: llm("another_story", 0.97) }));
@@ -300,6 +300,11 @@ describe("connector scope", () => {
 });
 
 describe("phalanx guard on filed items", () => {
+  it("moves a filed text that mentions wound care once out of its workspace, whatever Claude says", () => {
+    const d = decide(sig({ kind: "text_thread", current: "another_story", phalanxLines: { strong: phalanxTerms("We still don't have the money for the wound care").strong.length, weak: 0 }, llm: llm("another_story", 0.9) }));
+    expect(d).toMatchObject({ workspaceId: "inbox", changed: true, review: { suggested: "phalanx" } });
+  });
+
   it("does not move a filed item on investor vocabulary alone, but does once Claude confirms", () => {
     const base = sig({ current: "credvault", phalanxLines: { strong: 0, weak: 2 } });
     expect(decide(base)).toMatchObject({ workspaceId: "credvault", changed: false });

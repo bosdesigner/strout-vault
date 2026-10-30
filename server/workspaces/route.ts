@@ -22,11 +22,13 @@ export const INBOX_WS = "inbox";
 /** Phalanx files only at this confidence or more; below it the item waits in inbox for Ben. */
 export const PHALANX_MIN = 0.8;
 
-/** Strong phalanx terms: one in a title, or two lines of text, files to phalanx on its own. */
-export const PHALANX_STRONG: RegExp[] = [/\bphalanx/i, /\bshingle[\s-]?x\b/i, /\bdermatryx\b/i, /\bdermal[\s-]?x\b/i, /\bmill\s?pond\b/i];
-/** Weaker terms: investor and cap-table material, wound care. Phalanx only when Claude agrees; never filed elsewhere. */
+/**
+ * Strong phalanx terms, the ones the brief names: one in a title, or two lines of text, files to phalanx
+ * on its own; a single passing mention moves the item to inbox for review, whatever else it is filed under.
+ */
+export const PHALANX_STRONG: RegExp[] = [/\bphalanx/i, /\bshingle[\s-]?x\b/i, /\bdermatryx\b/i, /\bdermal[\s-]?x\b/i, /\bmill\s?pond\b/i, /\bwound[\s-]care\b/i];
+/** Weaker terms: investor and cap-table vocabulary. Phalanx only when Claude agrees; an unfiled item with them is never filed elsewhere. */
 export const PHALANX_WEAK: RegExp[] = [
-  /\bwound[\s-]care\b/i,
   /\bcap(italization)?[\s-]table\b/i,
   /\bterm[\s-]sheet\b/i,
   /\b(pre|post)[\s-]money\b/i,
