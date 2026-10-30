@@ -66,7 +66,12 @@ export interface MeetSyncOptions {
   rules?: MessageRules;
 }
 
-const FIRST_RUN_DAYS = 14;
+/**
+ * How far back the first listing of an account reaches. It used to be 14 days, and because the
+ * cursor only moved when a recording turned up, an account with no recent Meet recording was listed
+ * over a rolling 14-day window forever and never backfilled (docs/phase1-map.md section 5).
+ */
+const FIRST_RUN_DAYS = 365;
 const MAX_DOWNLOAD_ATTEMPTS = 4;
 
 interface MeetAccount {
@@ -157,6 +162,25 @@ async function enumerateAccount(ctx: WorkerContext, client: MeetClient, account:
   // Never had a recording: say so once on the account and move on; checked again (one call) next run.
   const everHad = account.capability === "recordings" || recordings.length > 0 || Number(account.detail.recordings_seen ?? 0) > 0;
   result.capability = everHad ? "recordings" : "none_found";
+  // Why none: are Meet meetings happening at all? Calendar events with a Meet link in the last 30
+  // days, and Meet-made Docs (transcripts, Gemini notes) Drive shows this grant. Meetings but no
+  // files means recording/transcripts are not being saved for this account (a Workspace setting).
+  let diagnosis: Record<string, unknown> | null = null;
+  const calendarGranted = client.scopes.includes(CALENDAR_EVENTS_READONLY_SCOPE) || account.scope.split(" ").includes(CALENDAR_EVENTS_READONLY_SCOPE);
+  if (!everHad && calendarGranted) {
+    try {
+      const evs = await client.events(new Date(ctx.now().getTime() - 30 * 86400_000), ctx.now());
+      const meetEvents = evs.filter((e) => e.hangoutLink || e.conferenceData?.conferenceSolution?.key?.type === "hangoutsMeet").length;
+      diagnosis = {
+        meet_events_30d: meetEvents,
+        meet_docs_seen: docs.length,
+        checked_since: since.toISOString().slice(0, 10),
+        verdict: meetEvents > 0 ? "meetings_but_no_recordings_saved" : "no_meet_meetings",
+      };
+    } catch (err) {
+      diagnosis = { error: (err as Error).message.slice(0, 200) };
+    }
+  }
 
   const calendar = client.scopes.includes(CALENDAR_EVENTS_READONLY_SCOPE) || account.scope.split(" ").includes(CALENDAR_EVENTS_READONLY_SCOPE);
   const owner = ownerIdentity(ctx.config, [account.email]);
@@ -177,9 +201,12 @@ async function enumerateAccount(ctx: WorkerContext, client: MeetClient, account:
     await recordMeeting(ctx, client, account, rec, doc, { calendar, owner, rules });
   }
   if (!opts.dryRun) {
+    // The cursor moves even when nothing was found, so the next run lists only what is new.
+    const cursorNext = newest ?? (!opts.sinceDays ? new Date(Math.max(since.getTime(), ctx.now().getTime() - 86400_000)) : null);
     const detail = {
       ...account.detail,
-      ...(newest && !opts.sinceDays ? { cursor: newest.toISOString() } : {}),
+      ...(cursorNext && !opts.sinceDays ? { cursor: cursorNext.toISOString() } : {}),
+      ...(diagnosis ? { diagnosis } : {}),
       last_listed_at: ctx.now().toISOString(),
       recordings_seen: Number(account.detail.recordings_seen ?? 0) + result.recordingsNew,
       calendar,
@@ -393,7 +420,7 @@ async function downloadPending(ctx: WorkerContext, accounts: MeetAccount[], clie
       } else await mark(ctx, file.id, "verified", bytes, sha256, null);
       summary.filesVerified++;
       await ctx.pool.query(`update interactions set media_id = coalesce(media_id, $2), pipeline_status = coalesce(pipeline_status, 'queued'), pipeline_updated_at = now() where id = $1`, [file.interaction_id, file.id]);
-      await ctx.pool.query(`insert into jobs (media_id, stage, status) values ($1, 'transcribe', 'pending'), ($1, 'extract', 'pending') on conflict (media_id, stage) do nothing`, [file.id]);
+      await ctx.pool.query(`insert into jobs (media_id, stage, status) values ($1, 'transcribe', 'pending') on conflict (media_id, stage) do nothing`, [file.id]);
       ctx.log(`meet:   verified recording ${file.source_file_id} (${(bytes / 1024 / 1024).toFixed(1)} MB)`);
     } catch (err) {
       const msg = (err as Error).message.slice(0, 300);

@@ -90,7 +90,7 @@ describe("upload", () => {
     const after = await counts();
     expect(after.interactions - before.interactions).toBe(1);
     expect(after.media - before.media).toBe(1);
-    expect(after.jobs - before.jobs).toBe(2);
+    expect(after.jobs - before.jobs).toBe(1); // transcribe only: extraction is tracked on the interaction
     expect(after.participants - before.participants).toBe(2);
 
     const i = (await t.dbHandle.pool.query(`select * from interactions where id = $1`, [interactionId])).rows[0];
@@ -105,15 +105,12 @@ describe("upload", () => {
     expect(m).toMatchObject({ interaction_id: interactionId, role: "original", status: "verified", storage: "local", storage_key: key, kind: "video", mime_type: "video/mp4", bytes: bytes.length, original_filename: "upload-test.mp4" });
     expect(m.sha256).toBe(crypto.createHash("sha256").update(bytes).digest("hex"));
     const jobs = (await t.dbHandle.pool.query(`select stage, status from jobs where media_id = $1 order by stage`, [mediaId])).rows;
-    expect(jobs).toEqual([
-      { stage: "extract", status: "pending" },
-      { stage: "transcribe", status: "pending" },
-    ]);
+    expect(jobs).toEqual([{ stage: "transcribe", status: "pending" }]);
 
     // The recording page reports it queued, with the local file playable in development.
     const detail = await s.agent.get(`/api/interactions/${interactionId}`);
     expect(detail.body.pipelineStatus).toBe("queued");
-    expect(detail.body.jobs).toHaveLength(2);
+    expect(detail.body.jobs).toHaveLength(1);
     expect(detail.body.video?.mediaId).toBe(mediaId);
   });
 

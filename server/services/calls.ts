@@ -156,7 +156,7 @@ export async function ingestRecording(deps: IngestDeps, ev: RecordingEvent): Pro
     );
     const mediaId: number = med.rows[0].id;
     await client.query(`update interactions set media_id = $1 where id = $2`, [mediaId, interactionId]);
-    await client.query(`insert into jobs (media_id, stage, status) values ($1, 'transcribe', 'pending'), ($1, 'extract', 'pending') on conflict (media_id, stage) do nothing`, [mediaId]);
+    await client.query(`insert into jobs (media_id, stage, status) values ($1, 'transcribe', 'pending') on conflict (media_id, stage) do nothing`, [mediaId]);
     const participants = [call.tn_party_id, call.caller_party_id].filter((x): x is number => !!x);
     if (participants.length) {
       await client.query(`insert into interaction_participants (interaction_id, party_id) select $1, unnest($2::bigint[]) on conflict do nothing`, [interactionId, participants]);

@@ -103,3 +103,11 @@ export function readState(file: string): Record<"voice_memo" | "iphone_call" | "
 export function writeState(file: string, state: Record<string, unknown>): void;
 export function readToken(opts?: { service?: string; account?: string }): string;
 export function makeLogger(file: string | null, opts?: { maxBytes?: number; keep?: number; echo?: boolean }): (line: string) => void;
+export interface CallLogEntry {
+  at: Date;
+  durationSec: number | null;
+  address: string;
+  name: string | null;
+}
+export function readCallHistory(db: DatabaseSync): CallLogEntry[];
+export function matchCallLog(recording: { createdAt: Date | null; durationSec: number | null }, calls: CallLogEntry[]): { name: string | null; phone: string | null; email?: string } | null;

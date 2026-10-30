@@ -17,7 +17,8 @@ describe("workspace classifier", () => {
     expect(classifyRecording(base({ title: "Phalanx Nano Zoom Meeting" }))).toMatchObject({ workspaceId: "phalanx" });
     expect(classifyRecording(base({ title: "PN Zoom Meeting" }))).toMatchObject({ workspaceId: "phalanx" });
     expect(classifyRecording(base({ title: "Harper Design Meeting" }))).toMatchObject({ workspaceId: "strout_arch" });
-    expect(classifyRecording(base({ title: "Jacob Jetton-Gonzales, Feasibility Study Discovery Call is Confirmed!" }))).toMatchObject({ workspaceId: "strout_arch" });
+    // Feasibility studies are AnotherStory's (Phase 1 v2), not Strout Architecture's.
+    expect(classifyRecording(base({ title: "Jacob Jetton-Gonzales, Feasibility Study Discovery Call is Confirmed!" }))).toMatchObject({ workspaceId: "another_story" });
     expect(classifyRecording(base({ title: "Contractor Call - Dax - 5 Fort Contractors" }))).toMatchObject({ workspaceId: "another_story" });
   });
 

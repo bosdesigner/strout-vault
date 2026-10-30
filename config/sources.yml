@@ -1,0 +1,8 @@
+# Conversation sources that come in through an adapter (server/messages/adapters/index.ts).
+# A source listed here and registered in ADAPTERS accepts POST /api/ingest/threads/<source> from an
+# ingest:messages token. iMessage and Gmail are built in and are not listed.
+#
+# Phase 2 (planned): the TikTok DM scrape and Instagram DMs, as kind dm_thread.
+enabled: []
+#  - tiktok_dm
+#  - instagram_dm

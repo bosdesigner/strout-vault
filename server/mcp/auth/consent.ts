@@ -7,7 +7,7 @@ import { Router, urlencoded, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
 import type { AppContext } from "../../context.ts";
 import { newSession, setSessionCookie } from "../../auth/session.ts";
-import { RESTRICTED_WORKSPACES, UNASSIGNED, parseStoredScope } from "../scope.ts";
+import { CONNECTOR_DEFAULT_RESTRICTED, RESTRICTED_NOTES, RESTRICTED_WORKSPACES, UNASSIGNED, parseStoredScope } from "../scope.ts";
 import { verifyPending, type PendingAuthorization, type VaultOAuthProvider } from "./oauth.ts";
 
 const esc = (s: unknown) =>
@@ -97,8 +97,12 @@ export function consentRouter(ctx: AppContext, provider: VaultOAuthProvider): Ro
     })();
     const boxes = rows
       .map(
-        (w) => `<label class="ws${restricted.has(w.id) ? " restricted" : ""}"><input type="checkbox" name="workspace" value="${esc(w.id)}"${restricted.has(w.id) ? "" : " checked"}>
-<span><strong>${esc(w.name)}</strong> <code>${esc(w.id)}</code>${restricted.has(w.id) ? "<small>Investor material: not included unless you tick it.</small>" : w.notes ? `<small>${esc(w.notes)}</small>` : ""}</span></label>`,
+        (w) => {
+          const on = !restricted.has(w.id) || (CONNECTOR_DEFAULT_RESTRICTED as readonly string[]).includes(w.id);
+          const note = restricted.has(w.id) ? (RESTRICTED_NOTES[w.id] ?? "Not included unless you tick it.") : w.notes;
+          return `<label class="ws${restricted.has(w.id) ? " restricted" : ""}"><input type="checkbox" name="workspace" value="${esc(w.id)}"${on ? " checked" : ""}>
+<span><strong>${esc(w.name)}</strong> <code>${esc(w.id)}</code>${note ? `<small>${esc(note)}</small>` : ""}</span></label>`;
+        },
       )
       .join("") +
       `<label class="ws restricted"><input type="checkbox" name="workspace" value="${UNASSIGNED}">

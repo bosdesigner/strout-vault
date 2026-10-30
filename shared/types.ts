@@ -88,6 +88,10 @@ export interface FactItem {
   aboutParty: ParticipantRef | null;
   amount: number | null;
   dueDate: string | null;
+  /** Verbatim words it came from, when recorded. */
+  quote?: string | null;
+  /** How many conversations this fact was said in (fact_sources). */
+  sourceCount?: number;
 }
 
 export interface ClipCandidateItem {

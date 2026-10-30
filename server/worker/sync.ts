@@ -45,7 +45,18 @@ export function zoomConfigured(ctx: WorkerContext): boolean {
   return !!(c.ZOOM_ACCOUNT_ID && c.ZOOM_CLIENT_ID && c.ZOOM_CLIENT_SECRET);
 }
 
+const zoomClients = new WeakMap<WorkerContext, ZoomClient>();
+
+/** One Zoom client (and one OAuth token) per run: the zoom and link steps share it. */
 export function makeZoomClient(ctx: WorkerContext): ZoomClient {
+  const cached = zoomClients.get(ctx);
+  if (cached) return cached;
+  const client = newZoomClient(ctx);
+  zoomClients.set(ctx, client);
+  return client;
+}
+
+function newZoomClient(ctx: WorkerContext): ZoomClient {
   const c = ctx.config;
   return new ZoomClient({
     accountId: c.ZOOM_ACCOUNT_ID!,
@@ -254,7 +265,7 @@ async function afterVerified(ctx: WorkerContext, file: PendingRow) {
   );
   if (!rows.length) {
     await ctx.pool.query(
-      `insert into jobs (media_id, stage, status) values ($1, 'transcribe', 'pending'), ($1, 'extract', 'pending') on conflict (media_id, stage) do nothing`,
+      `insert into jobs (media_id, stage, status) values ($1, 'transcribe', 'pending') on conflict (media_id, stage) do nothing`,
       [file.id],
     );
   }

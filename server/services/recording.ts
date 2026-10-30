@@ -59,13 +59,15 @@ export async function getRecording(pool: pg.Pool, storage: StorageDriver, id: nu
     ),
     pool.query(`select source, model, language, segment_count, word_count from transcripts where interaction_id = $1`, [id]),
     pool.query(
-      `select f.id, f.kind, f.text, f.status, f.quote_start_sec, f.amount, f.due_date,
+      `select f.id, f.kind, f.text, f.status, coalesce(fs.quote_start_sec, f.quote_start_sec) as quote_start_sec, f.amount, f.due_date,
+              coalesce(fs.quote, f.quote) as quote, (select count(*)::int from fact_sources x where x.fact_id = f.id) as source_count,
               o.id as owner_id, o.name as owner_name, a.id as about_id, a.name as about_name
        from facts f
+       left join fact_sources fs on fs.fact_id = f.id and fs.interaction_id = $1
        left join parties o on o.id = f.owner_party_id
        left join parties a on a.id = f.about_party_id
-       where f.interaction_id = $1
-       order by f.quote_start_sec nulls last, f.id`,
+       where f.interaction_id = $1 or fs.fact_id is not null
+       order by 4 nulls last, f.id`,
       [id],
     ),
     pool.query(
@@ -182,6 +184,8 @@ export async function getRecording(pool: pg.Pool, storage: StorageDriver, id: nu
       aboutParty: f.about_id ? { id: f.about_id, name: f.about_name } : null,
       amount: f.amount,
       dueDate: f.due_date ? String(f.due_date).slice(0, 10) : null,
+      quote: f.quote ?? null,
+      sourceCount: f.source_count ?? 1,
     })),
     clips: clips.rows.map((c) => ({
       id: c.id,

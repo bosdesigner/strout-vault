@@ -24,9 +24,10 @@ import { isOneTimeCode, redactOneTimeCodes, redactSensitive } from "./redact.ts"
 import { emailDomain, isOwner, normalizeIdentifier, phoneDigitKeys, type Identifier, type OwnerIdentity } from "./identity.ts";
 import type { MessageRules } from "./rules.ts";
 
-export type MessageSource = "imessage" | "gmail";
-export type ThreadKind = "text_thread" | "email_thread";
-export const MESSAGE_KINDS: ThreadKind[] = ["text_thread", "email_thread"];
+/** imessage and gmail are built in; DM sources (tiktok_dm, instagram_dm) come from adapters (server/messages/adapters). */
+export type MessageSource = "imessage" | "gmail" | (string & {});
+export type ThreadKind = "text_thread" | "email_thread" | "dm_thread";
+export const MESSAGE_KINDS: ThreadKind[] = ["text_thread", "email_thread", "dm_thread"];
 export const MESSAGE_SOURCES: MessageSource[] = ["imessage", "gmail"];
 export const INBOX = "inbox";
 export const NEVER_AUTO_ASSIGNED = ["phalanx"];

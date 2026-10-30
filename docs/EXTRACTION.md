@@ -1,5 +1,18 @@
 # Extraction (Jarvis step 2)
 
+> **Phase 1 v2 (2026-10-30) changed three things.** (1) Confident items (`EXTRACT_FACT_MIN_CONFIDENCE`,
+> 0.8) are written straight to `facts` as open facts with their verbatim `quote` and `message_idx`; only
+> the 0.6–0.8 ones still go to Review. (2) The same promise said in two conversations is one fact with
+> two `fact_sources` rows (the model is shown the open items already recorded and can say `same_as_fact_id`;
+> a trigram check on kind + owner + workspace backs it up). (3) Every kind is read (meetings, calls, voice
+> memos, Apple Notes, texts, email) in every readable workspace including `personal`, but only after the
+> `classify` step has seen it (`EXTRACT_REQUIRE_CLASSIFIED`), newest `EXTRACT_RECENT_DAYS` (30) first and
+> then back to `EXTRACT_MAX_AGE_DAYS` (365). Unfiled recordings are no longer read under a guessed
+> workspace: the classifier files them first. The types are commitment, task, follow_up (stored
+> `followup`), decision and amount (stored `price`); due dates are resolved from the day the line was
+> said (`server/facts/dates.ts`). Facts close from the recording page (Done / Drop / Reopen,
+> `POST /api/facts/:id/status`). Details: [phase1-map.md](phase1-map.md), [phase1-verification.md](phase1-verification.md).
+
 Step 1 gave agents a way to read the vault ([MCP.md](MCP.md)). Step 2 fills in what they read:
 the hourly worker reads each filed recording once with Claude and proposes what the relationship
 graph should learn from it. Every proposal goes to the **Review** page. Nothing reaches `facts`,
