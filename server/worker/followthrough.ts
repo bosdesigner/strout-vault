@@ -216,7 +216,7 @@ async function factCandidates(ctx: WorkerContext, workspaces: string[], ownerPar
        from facts f join interactions i on i.id = f.interaction_id
        left join parties o on o.id = f.owner_party_id
        left join parties a on a.id = f.about_party_id
-      where f.status = 'open' and f.kind in ('commitment', 'followup') and f.workspace_id = any($1::text[])
+      where f.status = 'open' and f.kind in ('commitment', 'task', 'followup') and f.workspace_id = any($1::text[])
       order by f.due_date nulls last, f.created_at desc
       limit 200`,
     [workspaces],
@@ -441,7 +441,8 @@ export async function processFollowthrough(ctx: WorkerContext): Promise<Followth
     spentUsd: 0,
     errors: [],
   };
-  const workspaces = await extractWorkspaces(ctx.pool, ctx.config.EXTRACT_WORKSPACES);
+  // Follow-through drafts replies; family texts are not chased (personal is read for facts only).
+  const workspaces = await extractWorkspaces(ctx.pool, ctx.config.EXTRACT_WORKSPACES, { personal: false });
   const ownerParty = await findOwnerParty(ctx.pool, ownerIdentity(ctx.config));
   const ownerId = ownerParty?.id ?? null;
   const taken = await takenKeys(ctx.pool);

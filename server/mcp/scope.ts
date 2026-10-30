@@ -12,6 +12,19 @@ export type StoredScope = string[];
 export const RESTRICTED_WORKSPACES = ["phalanx", "personal", "inbox"] as const;
 
 /**
+ * Restricted workspaces the consent screen ticks by default (Phase 1 v2): Ben's own connector reads
+ * his personal texts and notes. phalanx and inbox are never ticked by default and never implied by "*".
+ */
+export const CONNECTOR_DEFAULT_RESTRICTED = ["personal"] as const;
+
+/** Why each restricted workspace is restricted, for the consent screen and the Agents page. */
+export const RESTRICTED_NOTES: Record<string, string> = {
+  phalanx: "Investor material: not included unless you tick it.",
+  personal: "Family and personal texts, email and notes. Ticked for your own connector; untick it for anyone else's.",
+  inbox: "Items the classifier could not file confidently (borderline Phalanx material waits here too): not included unless you tick it.",
+};
+
+/**
  * Pseudo-workspace for recordings that have no workspace_id yet (the Zoom sync never set one).
  * Like phalanx it must be listed explicitly: "*" never implies it, because an unassigned recording
  * could belong to any venture, investor material included.

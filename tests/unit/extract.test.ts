@@ -27,9 +27,11 @@ const fact = (over: Partial<ExtractOutput["facts"][number]> = {}): ExtractOutput
   about_party_id: 2,
   project_id: 10,
   amount: null,
+  due_text: null,
   due_date: "2026-10-24",
   quote_start_sec: 120,
   quote: "I'll get you the revised plan Friday",
+  same_as_fact_id: null,
   confidence: 0.9,
   ...over,
 });

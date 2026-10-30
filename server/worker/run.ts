@@ -14,6 +14,8 @@ import { processLeads } from "./leads.ts";
 import { processGmail } from "./gmail.ts";
 import { processMeet } from "./meet.ts";
 import { refileInbox, type RefileSummary } from "../workspaces/refile.ts";
+import { processClassify, type ClassifySummary } from "../workspaces/classifyStep.ts";
+import { processLink, type LinkSummary } from "../people/link.ts";
 import { loadMessageRules } from "../messages/rules.ts";
 import { ownerIdentity } from "../messages/identity.ts";
 import type { MeetSyncSummary } from "../meet/sync.ts";
@@ -23,14 +25,18 @@ import { processCuts, type CutSummary } from "./cut.ts";
 import { buildReport, type PipelineReport } from "./report.ts";
 import { setState } from "./sync.ts";
 
-export type Step = "zoom" | "meet" | "leads" | "gmail" | "refile" | "transcribe" | "embed" | "extract" | "followthrough" | "scout" | "cut" | "report";
-export const ALL_STEPS: Step[] = ["zoom", "meet", "leads", "gmail", "refile", "transcribe", "embed", "extract", "followthrough", "scout", "cut", "report"];
+export type Step = "zoom" | "meet" | "leads" | "gmail" | "transcribe" | "link" | "refile" | "classify" | "embed" | "extract" | "followthrough" | "scout" | "cut" | "report";
+/**
+ * Ingest, then transcribe, then people (link) and filing (refile by known people, then the content
+ * classifier), and only then extraction, so every conversation is read under the workspace it belongs to.
+ */
+export const ALL_STEPS: Step[] = ["zoom", "meet", "leads", "gmail", "transcribe", "link", "refile", "classify", "embed", "extract", "followthrough", "scout", "cut", "report"];
 /**
  * Steps a run may do without the main worker lock: the 10-minute messages deployment runs
  * "gmail,embed" while the hourly run may still be transcribing. Each of those steps takes its
  * own advisory lock, so two of them never overlap.
  */
-export const LIGHT_STEPS: Step[] = ["gmail", "embed"];
+export const LIGHT_STEPS: Step[] = ["gmail", "link", "classify", "embed"];
 
 export interface RunOptions {
   trigger?: "schedule" | "manual" | "test";
@@ -42,6 +48,8 @@ export interface RunSummary {
   zoom?: SyncSummary;
   meet?: MeetSyncSummary;
   refile?: RefileSummary;
+  link?: LinkSummary;
+  classify?: ClassifySummary;
   leads?: LeadSyncSummary;
   gmail?: GmailSyncSummary;
   transcribe?: TranscribeSummary;
@@ -78,6 +86,9 @@ export interface WorkerConfigSnapshot {
   extractModel?: string;
   extractBudgetUsd?: number;
   extractWorkspaces?: string;
+  classifyConfigured?: boolean;
+  classifyModel?: string;
+  classifyBudgetUsd?: number;
   followthroughConfigured?: boolean;
   followthroughModel?: string;
   followthroughBudgetUsd?: number;
@@ -107,6 +118,9 @@ export function configSnapshot(ctx: WorkerContext): WorkerConfigSnapshot {
     extractModel: c.EXTRACT_MODEL,
     extractBudgetUsd: c.ANTHROPIC_API_KEY ? c.EXTRACT_MONTHLY_BUDGET_USD : 0,
     extractWorkspaces: c.EXTRACT_WORKSPACES,
+    classifyConfigured: !!c.ANTHROPIC_API_KEY && c.CLASSIFY_MONTHLY_BUDGET_USD > 0,
+    classifyModel: c.CLASSIFY_MODEL,
+    classifyBudgetUsd: c.ANTHROPIC_API_KEY ? c.CLASSIFY_MONTHLY_BUDGET_USD : 0,
     followthroughConfigured: !!c.ANTHROPIC_API_KEY && c.FOLLOWTHROUGH_MONTHLY_BUDGET_USD > 0,
     followthroughModel: c.FOLLOWTHROUGH_MODEL,
     followthroughBudgetUsd: c.ANTHROPIC_API_KEY ? c.FOLLOWTHROUGH_MONTHLY_BUDGET_USD : 0,
@@ -164,6 +178,8 @@ export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Prom
         if (step === "zoom") summary.zoom = await syncZoom(ctx, { dryRun: opts.dryRun });
         else if (step === "meet") summary.meet = await processMeet(ctx, { dryRun: opts.dryRun });
         else if (step === "refile" && !opts.dryRun) summary.refile = await refileInbox(ctx.pool, loadMessageRules(ctx.config.MESSAGES_CONFIG_DIR), ownerIdentity(ctx.config));
+        else if (step === "link" && !opts.dryRun) summary.link = await processLink(ctx);
+        else if (step === "classify" && !opts.dryRun) summary.classify = await processClassify(ctx);
         else if (step === "leads") summary.leads = await processLeads(ctx, { dryRun: opts.dryRun });
         else if (step === "gmail") summary.gmail = await processGmail(ctx, { dryRun: opts.dryRun });
         else if (step === "transcribe" && !opts.dryRun) summary.transcribe = await processTranscriptions(ctx);
@@ -220,6 +236,16 @@ export function formatRunSummary(s: RunSummary): string {
     const f = Object.entries(s.refile.filed);
     lines.push(`inbox: ${s.refile.checked} item(s) checked, ${f.length ? `filed ${f.map(([k, v]) => `${k} ${v}`).join(", ")}` : "none filed"}`);
   }
+  if (s.link) {
+    const k = s.link;
+    lines.push(`link: ${k.linked}/${k.candidates} interaction(s) got people (${Object.entries(k.bySource).map(([a, b]) => `${a} ${b}`).join(", ") || "none"}), ${k.suggested} suggestion(s), ${k.retitled} call(s) retitled; zoom participants ${k.zoomApi}, calendar ${k.calendar}${k.stoppedEarly ? `; stopped early: ${k.stoppedEarly}` : ""}`);
+  }
+  if (s.classify) {
+    const c = s.classify;
+    lines.push(
+      `classify: ${c.classified}/${c.candidates} classified, filed ${Object.entries(c.filed).map(([a, b]) => `${a} ${b}`).join(", ") || "none"}; ${c.inbox} left in inbox (${c.reviewQueued} review item(s)), ${c.phalanxGuarded} moved by the phalanx guard; Claude read ${c.llmItems}${c.configured ? "" : " (off: set CLASSIFY_MONTHLY_BUDGET_USD)"}, ${c.waitingOnBudget} waiting, ${c.failed} failed, $${c.spentUsd.toFixed(3)} spent${c.stoppedEarly ? `; stopped early: ${c.stoppedEarly}` : ""}`,
+    );
+  }
   if (s.leads) {
     const l = s.leads;
     const srcs = Object.entries(l.sources).filter(([, v]) => v.configured);
@@ -256,7 +282,7 @@ export function formatRunSummary(s: RunSummary): string {
     const x = s.extract;
     lines.push(
       x.configured
-        ? `extract: ${x.read}/${x.candidatesRecordings + (x.candidatesThreads ?? 0)} item(s) read (${x.threads ?? 0} thread(s), ${x.unfiled ?? 0} unfiled${x.filingProposals ? `, ${x.filingProposals} filing(s) queued` : ""}), queued ${x.queued.facts} fact(s), ${x.queued.speakers} speaker match(es), ${x.queued.projects} project link(s); ${x.waitingOnBudget} waiting on budget, ${x.failed} failed, $${x.spentUsd.toFixed(3)} spent${x.stoppedEarly ? `; stopped early: ${x.stoppedEarly}` : ""}`
+        ? `extract: ${x.read}/${x.candidatesRecordings + (x.candidatesThreads ?? 0)} item(s) read (${x.threads ?? 0} thread(s)), ${x.facts?.created ?? 0} fact(s) written (+${x.facts?.linked ?? 0} linked to an existing fact), queued for review ${x.queued.facts} fact(s), ${x.queued.speakers} speaker match(es), ${x.queued.projects} project link(s); ${x.waitingOnBudget} waiting on budget, ${x.failed} failed, $${x.spentUsd.toFixed(3)} spent${x.stoppedEarly ? `; stopped early: ${x.stoppedEarly}` : ""}`
         : `extract: off${x.candidatesRecordings || x.candidatesThreads ? ` (${x.candidatesRecordings} recording(s)${x.candidatesThreads ? ` and ${x.candidatesThreads} thread(s)` : ""} waiting)` : ""}`,
     );
   }
@@ -288,7 +314,7 @@ export function formatRunSummary(s: RunSummary): string {
     );
   }
   // Per-item errors from each step, a few of them: the full lists live in the run's summary JSON.
-  const itemErrors = [...(s.zoom?.errors ?? []), ...(s.meet?.errors ?? []), ...(s.leads?.errors ?? []), ...(s.gmail?.errors ?? []), ...(s.gmail?.ingest.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.embed?.errors ?? []), ...(s.extract?.errors ?? []), ...(s.followthrough?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
+  const itemErrors = [...(s.link?.errors ?? []), ...(s.classify?.errors ?? []), ...(s.zoom?.errors ?? []), ...(s.meet?.errors ?? []), ...(s.leads?.errors ?? []), ...(s.gmail?.errors ?? []), ...(s.gmail?.ingest.errors ?? []), ...(s.transcribe?.errors ?? []), ...(s.embed?.errors ?? []), ...(s.extract?.errors ?? []), ...(s.followthrough?.errors ?? []), ...(s.scout?.errors ?? []), ...(s.cut?.errors ?? [])];
   if (itemErrors.length) {
     const shown = itemErrors.slice(0, 3);
     lines.push(`errors: ${shown.join(" | ")}${itemErrors.length > shown.length ? ` | …and ${itemErrors.length - shown.length} more` : ""}`);

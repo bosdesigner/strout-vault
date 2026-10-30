@@ -54,6 +54,8 @@ export function defaultPaths(home = os.homedir()) {
       path.join(home, "Library/Application Support/com.apple.voicememos/Recordings"),
     ],
     notesDir: path.join(gc, "group.com.apple.notes"),
+    /** The Mac's copy of the phone's call log (synced from the iPhone), to find who a "Call Recording" was with. */
+    callHistory: path.join(home, "Library/Application Support/CallHistoryDB/CallHistory.storedata"),
     state: path.join(home, ".strout-vault/apple-media-state.json"),
     config: path.join(home, ".strout-vault/apple-media.json"),
     log: path.join(home, "Library/Logs/strout-vault-apple-media.log"),
@@ -691,4 +693,46 @@ export function makeLogger(file, opts = {}) {
       /* logging must never stop a run */
     }
   };
+}
+
+/**
+ * The call log: { at, durationSec, address (phone or email), name } per call, newest first.
+ * ZCALLRECORD lives in CallHistory.storedata (Core Data); ZNAME is the contact name when the phone
+ * had one. Only the columns needed are read.
+ */
+export function readCallHistory(db) {
+  const cols = columns(db, "ZCALLRECORD");
+  if (!cols.includes("ZDATE") || !cols.includes("ZADDRESS")) throw new SchemaError("ZCALLRECORD has no ZDATE/ZADDRESS");
+  const name = cols.includes("ZNAME") ? "ZNAME" : "null";
+  const dur = cols.includes("ZDURATION") ? "ZDURATION" : "null";
+  return db
+    .prepare(`select ZDATE as date, ${dur} as duration, ZADDRESS as address, ${name} as name from ZCALLRECORD where ZADDRESS is not null order by ZDATE desc limit 20000`)
+    .all()
+    .map((r) => ({ at: coreDataDate(r.date), durationSec: r.duration == null ? null : Number(r.duration), address: String(r.address), name: r.name ? String(r.name) : null }))
+    .filter((r) => r.at);
+}
+
+/**
+ * The call a recording was made on: a call that started within 10 minutes of the recording's start
+ * (or ended within 10 minutes of it, when the note is stamped at the end), closest first, with a
+ * similar length breaking ties. Null when nothing is close or two calls are equally close.
+ */
+export function matchCallLog(recording, calls) {
+  const at = recording.createdAt instanceof Date ? recording.createdAt.getTime() : NaN;
+  if (!Number.isFinite(at)) return null;
+  const window = 10 * 60_000;
+  const scored = [];
+  for (const c of calls) {
+    const start = c.at.getTime();
+    const end = start + (c.durationSec ?? 0) * 1000;
+    const gap = Math.min(Math.abs(start - at), Math.abs(end - at));
+    if (gap > window) continue;
+    const lenDiff = recording.durationSec != null && c.durationSec != null ? Math.abs(recording.durationSec - c.durationSec) : 600;
+    scored.push({ c, score: gap / 1000 + lenDiff });
+  }
+  scored.sort((a, b) => a.score - b.score);
+  if (!scored.length) return null;
+  if (scored.length > 1 && scored[1].score - scored[0].score < 5 && scored[1].c.address !== scored[0].c.address) return null;
+  const best = scored[0].c;
+  return /@/.test(best.address) ? { name: best.name, phone: null, email: best.address } : { name: best.name, phone: best.address };
 }

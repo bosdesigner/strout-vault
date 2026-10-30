@@ -1,4 +1,5 @@
 import type pg from "pg";
+import { recordFact } from "../facts/store.ts";
 import { z } from "zod";
 import { PROPOSAL_SCHEMAS, type ProposalType } from "../mcp/tools/propose.ts";
 
@@ -334,25 +335,25 @@ const APPLIERS: Record<ProposalType, Applier> = {
     if (!rows[0]) throw new ReviewError(400, `unknown interaction ${String(p.interaction_id)}`);
     for (const k of ["owner_party_id", "about_party_id"]) if (p[k] !== undefined) await mustExist(db, "parties", p[k]);
     if (p.project_id !== undefined) await mustExist(db, "projects", p.project_id);
-    const ins = await db.query<{ id: number }>(
-      `insert into facts (interaction_id, workspace_id, kind, text, owner_party_id, about_party_id, project_id, amount, due_date, status, confidence, quote_start_sec, source_review_id)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'open', $10, $11, $12) returning id`,
-      [
-        p.interaction_id,
-        (p.workspace_id as string | undefined) ?? rows[0].workspace_id,
-        p.kind,
-        p.text,
-        p.owner_party_id ?? null,
-        p.about_party_id ?? null,
-        p.project_id ?? null,
-        p.amount ?? null,
-        p.due_date ?? null,
-        p.confidence ?? null,
-        p.quote_start_sec ?? null,
-        row.id,
-      ],
-    );
-    return [`facts #${ins.rows[0].id}`];
+    // One write path for facts: a repeat of an open fact links this conversation to it instead (fact_sources).
+    const quote = typeof row.reason === "string" ? (row.reason.match(/^“(.+)” at /)?.[1] ?? null) : null;
+    const r = await recordFact(db, {
+      interactionId: p.interaction_id as number,
+      workspaceId: (p.workspace_id as string | undefined) ?? rows[0].workspace_id,
+      kind: p.kind as string,
+      text: p.text as string,
+      ownerPartyId: (p.owner_party_id as number | undefined) ?? null,
+      aboutPartyId: (p.about_party_id as number | undefined) ?? null,
+      projectId: (p.project_id as number | undefined) ?? null,
+      amount: (p.amount as number | undefined) ?? null,
+      dueDate: (p.due_date as string | undefined) ?? null,
+      confidence: (p.confidence as number | undefined) ?? null,
+      quote,
+      quoteStartSec: (p.quote_start_sec as number | undefined) ?? null,
+      origin: "review",
+      sourceReviewId: row.id as number,
+    });
+    return [r.created ? `facts #${r.factId}` : `facts #${r.factId} (already recorded; this conversation added as a source)`];
   },
 
   async new_relationship(db, raw) {

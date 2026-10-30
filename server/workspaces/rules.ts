@@ -13,13 +13,14 @@ export interface WorkspaceRule {
 export const WORKSPACE_RULES: WorkspaceRule[] = [
   {
     workspaceId: "another_story",
-    title: [/another\s?story/i, /\bcontractor call\b/i, /\bfranchise/i],
-    transcript: [/another\s?story/i, /anotherstorybldr/i, /\bfranchisee?s?\b/i, /\bterritor(y|ies)\b/i, /\bsecond[- ]story\b/i, /\bassessments?\b/i, /\bbuilder partners?\b/i],
+    // Feasibility studies (discovery, onboarding, delivery) are AnotherStory's, not Strout Architecture's.
+    title: [/another\s?story/i, /\bcontractor call\b/i, /\bfranchise/i, /feasibility/i],
+    transcript: [/another\s?story/i, /anotherstorybldr/i, /\bfranchisee?s?\b/i, /\bterritor(y|ies)\b/i, /\bsecond[- ]story\b/i, /\bassessments?\b/i, /\bbuilder partners?\b/i, /feasibility stud(y|ies)/i],
   },
   {
     workspaceId: "phalanx",
-    title: [/\bphalanx/i, /\bPN\b/, /\bshingle\s?x\b/i],
-    transcript: [/\bphalanx/i, /\bshingle\s?x\b/i, /\bnano\b/i, /\binvestor deck\b/i],
+    title: [/\bphalanx/i, /\bPN\b/, /\bshingle\s?x\b/i, /\bdermatryx\b/i, /\bdermal\s?x\b/i, /\bmill\s?pond\b/i],
+    transcript: [/\bphalanx/i, /\bshingle\s?x\b/i, /\bnano\b/i, /\binvestor deck\b/i, /\bdermatryx\b/i, /\bdermal\s?x\b/i, /\bmill\s?pond\b/i, /\bwound care\b/i, /\bcap table\b/i],
   },
   {
     workspaceId: "credvault",
@@ -40,8 +41,8 @@ export const WORKSPACE_RULES: WorkspaceRule[] = [
     // Transcript terms are the ones AnotherStory assessment calls do NOT also use: "floor plan" and
     // "architect" come up in both, so they count only in titles.
     workspaceId: "strout_arch",
-    title: [/strout architecture/i, /\bdesign meeting\b/i, /feasibility study/i, /\bfloor ?plans?\b/i, /\barchitect/i, /\bacres?\b/i],
-    transcript: [/strout architecture/i, /feasibility stud(y|ies)/i, /\bsite plan\b/i, /\bpermit set\b/i, /\bschematic design\b/i, /\bconstruction documents?\b/i, /\bdesign (fee|contract|agreement)\b/i],
+    title: [/strout architecture/i, /\bdesign meeting\b/i, /\bfloor ?plans?\b/i, /\barchitect/i, /\bacres?\b/i],
+    transcript: [/strout architecture/i, /\bsite plan\b/i, /\bpermit set\b/i, /\bschematic design\b/i, /\bconstruction documents?\b/i, /\bdesign (fee|contract|agreement)\b/i],
   },
 ];
 

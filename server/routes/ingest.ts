@@ -19,6 +19,8 @@ import {
   finalizeSchema,
   finishRun,
   noteSchema,
+  participantsSchema,
+  updateDeviceParticipants,
   presignDevice,
   presignSchema,
   runFinishSchema,
@@ -30,6 +32,7 @@ import {
 } from "../device/ingest.ts";
 import type { ZodType } from "zod";
 import { ingestBatchSchema, imessageThreads } from "../messages/imessage.ts";
+import { enabledAdapters } from "../messages/adapters/index.ts";
 import { countsOut, ingestThreads } from "../messages/ingest.ts";
 import { ownerIdentity } from "../messages/identity.ts";
 import { loadMessageRules } from "../messages/rules.ts";
@@ -73,6 +76,42 @@ export function ingestRouter(ctx: AppContext): Router {
       res.json({ ok: summary.errors.length === 0, threads: summary.threadsIn, messages: summary.messagesIn, ...countsOut(summary) });
     } catch (err) {
       console.error(`[ingest] messages batch failed: ${(err as Error).message}`);
+      res.status(500).json({ error: "internal_error" });
+    }
+  });
+
+  // ---- /threads/:source: adapter sources (Phase 2 hook, server/messages/adapters) -----------------
+  r.post("/threads/:source", limiter, express.json({ limit: "20mb" }), async (req: Request, res: Response) => {
+    const adapter = enabledAdapters(ctx.config.MESSAGES_CONFIG_DIR).get(String(req.params.source));
+    if (!adapter) {
+      res.status(404).json({ error: "unknown_source", message: "no enabled adapter for this source (config/sources.yml)" });
+      return;
+    }
+    const m = /^Bearer\s+(\S+)$/i.exec(req.get("authorization") ?? "");
+    const who = m ? await verifyIngestToken(ctx.pool, m[1]) : null;
+    if (!who) {
+      res.status(401).set("WWW-Authenticate", "Bearer").json({ error: "unauthenticated" });
+      return;
+    }
+    if (who === "forbidden") {
+      res.status(403).json({ error: "insufficient_scope", message: "this token does not carry ingest:messages" });
+      return;
+    }
+    const parsed = adapter.schema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "invalid_batch", issues: parsed.error.issues.slice(0, 10).map((i) => `${i.path.join(".")}: ${i.message}`) });
+      return;
+    }
+    try {
+      const summary = await ingestThreads(ctx.pool, adapter.toThreads(parsed.data), {
+        owner: ownerIdentity(ctx.config),
+        rules: loadMessageRules(ctx.config.MESSAGES_CONFIG_DIR),
+        importSource: adapter.source,
+        countsIn: { token: `pat:${who.id}` },
+      });
+      res.json({ ok: summary.errors.length === 0, threads: summary.threadsIn, messages: summary.messagesIn, ...countsOut(summary) });
+    } catch (err) {
+      console.error(`[ingest] ${adapter.source} batch failed: ${(err as Error).message}`);
       res.status(500).json({ error: "internal_error" });
     }
   });
@@ -167,6 +206,7 @@ export function ingestRouter(ctx: AppContext): Router {
     const out = await upsertNote(deps(req), caller, body);
     return { status: out.status === "created" ? 201 : 200, body: out };
   }));
+  device.post("/participants", handle(participantsSchema, async (req, body) => ({ body: await updateDeviceParticipants(deps(req), body) })));
   device.post("/runs", handle(runStartSchema, async (_req, body, caller) => ({ status: 201, body: { run_id: await startRun(ctx.pool, caller, body) } })));
   device.post("/runs/:id/finish", handle(runFinishSchema, async (req, body, caller) => {
     const id = Number(req.params.id);

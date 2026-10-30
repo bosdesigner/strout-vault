@@ -85,7 +85,7 @@ const envSchema = z.object({
   // Workspaces whose recordings and threads are read. "*" is every workspace except phalanx
   // (investor material), personal and inbox; phalanx is only read when listed: "*,phalanx".
   EXTRACT_WORKSPACES: z.string().default("*"),
-  EXTRACT_MAX_PER_RUN: z.coerce.number().int().positive().default(20),
+  EXTRACT_MAX_PER_RUN: z.coerce.number().int().positive().default(40),
   // Texts and email (Jarvis step 5 B, docs/FOLLOW-THROUGH.md): threads with a message in the last
   // N days are read, and read again when they gain messages (only the new ones are sent). 0 = off.
   EXTRACT_THREAD_DAYS: z.coerce.number().int().min(0).default(30),
@@ -94,6 +94,28 @@ const envSchema = z.object({
   // Assessment", or a known person in the title) are read under that workspace, and the filing is
   // queued for review. Never phalanx unless EXTRACT_WORKSPACES lists it. "0" = unfiled never read.
   EXTRACT_UNFILED: z.enum(["0", "1"]).default("1"),
+  // Phase 1 v2: facts at this confidence or more are written straight to `facts` (status open);
+  // between EXTRACT_MIN_CONFIDENCE and this they go to Review as before.
+  EXTRACT_FACT_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.8),
+  // The backfill reads the last N days first (newest first), then older items back to EXTRACT_MAX_AGE_DAYS.
+  EXTRACT_RECENT_DAYS: z.coerce.number().int().min(1).default(30),
+  EXTRACT_MAX_AGE_DAYS: z.coerce.number().int().min(1).default(365),
+  // "1": only interactions the content classifier has seen are read (so nothing is read under the wrong workspace).
+  EXTRACT_REQUIRE_CLASSIFIED: z.enum(["0", "1"]).default("1"),
+  // ---- Content routing (Phase 1 v2, docs/phase1-verification.md) ----
+  // Worker step `classify` files every interaction from its content: the phalanx guard, the Gmail
+  // account, participants, and Claude reading the first ~2,000 characters when those do not settle
+  // it. Same key as the scout, its own budget (spend_ledger provider "anthropic-classify"); 0 = the
+  // deterministic signals still file what they can and the rest waits.
+  CLASSIFY_MODEL: z.string().default("claude-opus-5-5"),
+  CLASSIFY_EFFORT: z.enum(["low", "medium", "high", "xhigh", "max"]).default("low"),
+  CLASSIFY_MONTHLY_BUDGET_USD: z.coerce.number().min(0).default(0),
+  CLASSIFY_MAX_PER_RUN: z.coerce.number().int().positive().default(400),
+  CLASSIFY_BATCH: z.coerce.number().int().min(1).max(25).default(10),
+  // Claude's read files an item at this confidence or more; below it the item stays in inbox.
+  CLASSIFY_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.8),
+  // ---- People linking (Phase 1 v2): worker step `link` ----
+  LINK_MAX_PER_RUN: z.coerce.number().int().positive().default(500),
   // ---- Follow-through (Jarvis step 5 C, docs/FOLLOW-THROUGH.md) ----
   // Notices commitments that were kept, overdue or stale, messages waiting on Ben's reply and
   // leads or clients gone quiet, and queues each on Review with a drafted reply. Nothing is sent.

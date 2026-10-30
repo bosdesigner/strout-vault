@@ -87,6 +87,15 @@ cp apple-media.example.json ~/.strout-vault/apple-media.json && open -e ~/.strou
 | `min_memo_seconds` | `5` | shorter voice memos are not sent |
 | `call_recordings_folder` | `"Call Recordings"` | audio in this folder is a call recording |
 | `call_title_detection` | `true` | audio in any folder whose note title starts with "Call" ("Call with Kevin", "Call Recording") is a call recording; the name after "Call with" becomes the participant |
+
+**"Call Recording" with no name.** iOS titles a recording "Call Recording" when it has no contact
+to show. The collector then looks the call up in the Mac's copy of the phone's call log
+(`~/Library/Application Support/CallHistoryDB/CallHistory.storedata`, synced from the iPhone when
+"Calls on Other Devices" is on; readable under the same Full Disk Access grant). The call that started
+or ended within 10 minutes of the recording, with the closest length, gives the number (and the
+contact name when the phone had one). New calls are sent with it; calls sent earlier get it through
+`POST /api/ingest/device/participants`, once each. The vault's link step matches the number to a
+person and retitles the call "Call with <Name>". `--call-history -` turns the lookup off.
 | `include_voice_memos` / `include_call_recordings` / `include_notes` | `true` | switch a source off |
 
 Locked (password-protected) notes and anything in Recently Deleted are never sent. Audio attached to notes in other

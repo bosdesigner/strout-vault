@@ -148,7 +148,7 @@ describe("presign -> PUT -> finalize", () => {
     expect(m).toMatchObject({ source: "voice_memo", role: "original", status: "verified", kind: "audio", sha256: memo.sha, bytes: memo.bytes.length });
     expect(fs.readFileSync(path.join(STORAGE, m.storage_key)).equals(memo.bytes)).toBe(true);
     const jobs = (await pool.query(`select stage, status from jobs where media_id = $1 order by stage`, [m.id])).rows;
-    expect(jobs).toEqual([{ stage: "extract", status: "pending" }, { stage: "transcribe", status: "pending" }]);
+    expect(jobs).toEqual([{ stage: "transcribe", status: "pending" }]); // no extract job: extraction is tracked on the interaction
     const fin = await request(t.app).post(`/api/ingest/device/runs/${run.body.run_id}/finish`).set(auth("mac")).send({ counts_in: { scanned: { voice_memo: 1 } } });
     expect(fin.status).toBe(200);
     const ir = (await pool.query(`select * from import_runs where id = $1`, [run.body.run_id])).rows[0];

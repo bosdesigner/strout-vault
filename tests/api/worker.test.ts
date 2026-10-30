@@ -200,10 +200,7 @@ describe("worker run", () => {
     expect(aSeg[0]).toMatchObject({ idx: 0, speaker: "Dana Whitfield", text: "Thanks for making the time today.", words: null });
     expect(String(a.transcript)).toContain("[00:00:01] Dana Whitfield: Thanks");
     const aJobs = (await pool.query(`select j.stage, j.status from jobs j join media m on m.id = j.media_id where m.interaction_id = $1 order by j.stage`, [a.id])).rows;
-    expect(aJobs).toEqual([
-      { stage: "extract", status: "pending" },
-      { stage: "transcribe", status: "done" },
-    ]);
+    expect(aJobs).toEqual([{ stage: "transcribe", status: "done" }]);
     // The search index sees it immediately (tsv is a generated column).
     const hit = await one<{ n: number }>(`select count(*)::int as n from segments where interaction_id = $1 and tsv @@ websearch_to_tsquery('english', 'pelican roof tiles')`, [a.id]);
     expect(hit.n).toBe(1);

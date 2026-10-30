@@ -94,6 +94,14 @@ export const noteSchema = z.object({
   run_id: runId,
 });
 
+/** Who was on a call the collector already sent (found later, e.g. in the Mac's call history). */
+export const participantsSchema = z.object({
+  source: z.enum(DEVICE_FILE_SOURCES),
+  source_ref: sourceRef,
+  participants_raw: z.array(participant).min(1).max(20),
+  run_id: runId,
+});
+
 export const runStartSchema = z.object({
   collector: z.object({ name: z.string().max(60), version: z.string().max(40).optional(), host: z.string().max(200).optional() }).optional(),
   counts_in: z.record(z.unknown()).optional(),
@@ -519,4 +527,22 @@ async function countItem(pool: pg.Pool, caller: DeviceCaller, run: number | unde
     outcome !== "error",
   ]);
   await pool.query(`update import_runs set counts_out = ${bump}${errs} where id = $1`, [ins.rows[0].id, ...params]);
+}
+
+/**
+ * Adds who was on a call to one the vault already has, when it came in without anyone (an iPhone
+ * "Call Recording" note carries no contact; the collector finds the number in the Mac's call
+ * history afterwards). Only fills an empty participant list, never replaces one, and clears
+ * linked_at so the worker's link step matches the number and retitles the call.
+ */
+export async function updateDeviceParticipants(deps: DeviceDeps, input: z.infer<typeof participantsSchema>): Promise<{ interaction_id: number | null; status: "updated" | "unchanged" | "not_found" }> {
+  const { rows } = await deps.pool.query(`select id, participants_raw from interactions where source = $1 and source_ref = $2`, [input.source, input.source_ref]);
+  const row = rows[0];
+  if (!row) return { interaction_id: null, status: "not_found" };
+  const existing = Array.isArray(row.participants_raw) ? row.participants_raw : [];
+  if (existing.length) return { interaction_id: Number(row.id), status: "unchanged" };
+  const people = await identifyParticipants(deps.pool, input.participants_raw, deps.owner);
+  if (!people.raw.length) return { interaction_id: Number(row.id), status: "unchanged" };
+  await deps.pool.query(`update interactions set participants_raw = $2::jsonb, linked_at = null, updated_at = now() where id = $1`, [row.id, JSON.stringify(people.raw)]);
+  return { interaction_id: Number(row.id), status: "updated" };
 }

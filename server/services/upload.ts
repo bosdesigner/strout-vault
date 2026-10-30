@@ -130,10 +130,9 @@ export async function finishUpload(
     const mediaId: number = med.rows[0].id;
 
     await client.query(`update interactions set media_id = $1 where id = $2`, [mediaId, interactionId]);
-    await client.query(
-      `insert into jobs (media_id, stage, status) values ($1, 'transcribe', 'pending'), ($1, 'extract', 'pending')`,
-      [mediaId],
-    );
+    // Only the transcribe job: extraction is tracked on interactions.extracted_at (docs/phase1-map.md),
+    // and an extract job here was never consumed by anything.
+    await client.query(`insert into jobs (media_id, stage, status) values ($1, 'transcribe', 'pending')`, [mediaId]);
     const partyIds = [...new Set(input.partyIds.filter((n) => Number.isInteger(n) && n > 0))];
     if (partyIds.length) {
       await client.query(

@@ -29,7 +29,9 @@ import {
   fmtCounts,
   loadConfig,
   makeLogger,
+  matchCallLog,
   openCopy,
+  readCallHistory,
   readNotes,
   readState,
   readToken,
@@ -57,6 +59,7 @@ function parseArgs(argv) {
     url: process.env.STROUT_VAULT_URL ?? "",
     voiceMemosDirs: d.voiceMemosDirs,
     notesDir: d.notesDir,
+    callHistory: d.callHistory,
     only: SOURCES,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -69,6 +72,7 @@ function parseArgs(argv) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new Error("--since takes YYYY-MM-DD");
       out.since = new Date(`${v}T00:00:00`);
     } else if (a === "--config") out.config = argv[++i];
+    else if (a === "--call-history") out.callHistory = argv[++i] === "-" ? null : argv[i];
     else if (a === "--state") out.state = argv[++i];
     else if (a === "--log-file") out.logFile = argv[++i] === "-" ? null : argv[i];
     else if (a === "--url") out.url = argv[++i];
@@ -203,6 +207,27 @@ function collect(args, cfg) {
         out.otherAudio = r.otherAudio;
         out.duplicateCopies = r.duplicateCopies;
         if (wantCalls) {
+          // "Call Recording" notes carry no contact: find the call in the Mac's call log by time.
+          const unnamed = r.recordings.filter((c) => !c.skip && !c.participant);
+          if (unnamed.length && args.callHistory && fs.existsSync(args.callHistory)) {
+            try {
+              const logCopy = openCopy(args.callHistory);
+              try {
+                const calls = readCallHistory(logCopy.db);
+                for (const c of unnamed) {
+                  const hit = matchCallLog(c, calls);
+                  if (hit) {
+                    c.participant = hit;
+                    c.participantFrom = "call_history";
+                  }
+                }
+              } finally {
+                closeCopy(logCopy);
+              }
+            } catch (err) {
+              out.callHistoryError = err.message.slice(0, 200);
+            }
+          }
           for (const c of r.recordings) {
             if (c.skip) bump("iphone_call", c.skip);
             else out.iphone_call.push({
@@ -216,6 +241,7 @@ function collect(args, cfg) {
               durationSec: c.durationSec,
               title: c.title,
               participants: c.participant ? [c.participant] : null,
+              participantFrom: c.participantFrom ?? null,
               payload: { note_id: c.noteId, attachment_id: c.attachmentId, ...(c.appleTranscript ? { apple_transcript: c.appleTranscript } : {}) },
               when: c.createdAt,
             });
@@ -310,6 +336,22 @@ async function main() {
           log(`${src} ${it.ref}: FAILED ${lastError}`);
           if (err.status === 401 || err.status === 403) throw err;
         }
+      }
+    }
+    // Calls sent before their number was known: tell the vault who they were with, once.
+    state.call_participants = state.call_participants ?? {};
+    for (const it of found.iphone_call) {
+      if (!it.participantFrom || !state.iphone_call[it.ref] || state.call_participants[it.ref] || plan.iphone_call.includes(it)) continue;
+      try {
+        const r = await vault.call("POST", "/participants", { source: "iphone_call", source_ref: it.ref, participants_raw: it.participants, run_id: runId });
+        state.call_participants[it.ref] = r.status;
+        tally("iphone_call", `participants_${r.status}`);
+        save();
+      } catch (err) {
+        errors++;
+        lastError = err.message.slice(0, 200);
+        log(`iphone_call ${it.ref}: participants FAILED ${lastError}`);
+        if (err.status === 401 || err.status === 403) throw err;
       }
     }
     for (const it of plan.apple_note) {

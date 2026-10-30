@@ -45,7 +45,10 @@ export const listOpenCommitments: ToolDef<typeof schema> = {
     if (args.due_before) conds.push(`f.due_date <= ${p(parseDate(args.due_before, "due_before"))}::date`);
     const limit = clampLimit(args.limit);
     const { rows } = await ctx.reader.query(
-      `select f.id, f.kind, f.text, f.status, f.amount, f.due_date, f.confidence, f.quote_start_sec, f.created_at,
+      `select f.id, f.kind, f.text, f.status, f.amount, f.due_date, f.confidence, f.quote_start_sec, f.created_at, f.quote, f.message_idx,
+              coalesce((select json_agg(json_build_object('interaction_id', fs.interaction_id, 'title', si.title, 'occurred_at', si.occurred_at, 'quote', fs.quote, 'quote_start_sec', fs.quote_start_sec, 'message_idx', fs.message_idx) order by si.occurred_at)
+                          from fact_sources fs join interactions si on si.id = fs.interaction_id
+                         where fs.fact_id = f.id and ${scopeSql(ctx.scope, params, "si.workspace_id")}), '[]') as sources,
               coalesce(f.workspace_id, i.workspace_id) as workspace_id,
               i.id as interaction_id, i.title as interaction_title, i.occurred_at,
               o.id as owner_id, o.name as owner_name, a.id as about_id, a.name as about_name, pr.id as project_id, pr.name as project_name
@@ -70,7 +73,10 @@ export const listOpenCommitments: ToolDef<typeof schema> = {
       owner: f.owner_id ? { party_id: f.owner_id, name: f.owner_name } : null,
       about: f.about_id ? { party_id: f.about_id, name: f.about_name } : null,
       project: f.project_id ? { project_id: f.project_id, name: f.project_name, deep_link: deepLink(ctx, `/projects/${f.project_id}`) } : null,
-      source: f.interaction_id ? { interaction_id: f.interaction_id, title: f.interaction_title, occurred_at: iso(f.occurred_at), quote_start_sec: f.quote_start_sec } : null,
+      quote: f.quote ?? null,
+      source: f.interaction_id ? { interaction_id: f.interaction_id, title: f.interaction_title, occurred_at: iso(f.occurred_at), quote_start_sec: f.quote_start_sec, message_idx: f.message_idx ?? null } : null,
+      // Every conversation the same promise was made in (one fact, several sources).
+      sources: (f.sources as Array<Record<string, unknown>>).map((x) => ({ ...x, occurred_at: iso(x.occurred_at as string | null) })),
       deep_link: f.interaction_id ? deepLink(ctx, `/r/${f.interaction_id}${f.quote_start_sec != null ? `?t=${f.quote_start_sec}` : ""}`) : null,
     }));
     return { result: { count: items.length, items }, count: items.length };

@@ -289,7 +289,7 @@ describe("twilio webhooks", () => {
     expect(rec.files).toHaveLength(1);
     expect(rec.files[0]).toMatchObject({ storage: "local", role: "original", kind: "audio", mimeType: "audio/mpeg", bytes: FAKE_MP3.length, status: "verified" });
     expect(rec.files[0].storageKey).toMatch(/^calls\/\d{4}\/\d{2}\/CAtest0001\.mp3$/);
-    expect(rec.jobs.map((j) => `${j.stage}:${j.status}`).sort()).toEqual(["extract:pending", "transcribe:pending"]);
+    expect(rec.jobs.map((j) => `${j.stage}:${j.status}`).sort()).toEqual(["transcribe:pending"]);
     const stored = fs.readFileSync(path.join(t.storage.rootDir, rec.files[0].storageKey));
     expect(crypto.createHash("sha256").update(stored).digest("hex")).toBe(crypto.createHash("sha256").update(FAKE_MP3).digest("hex"));
     // The contractor whose number it is can see the call.

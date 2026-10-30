@@ -85,6 +85,13 @@ export default function RecordingPage() {
     enabled: detail.isSuccess && owner,
     staleTime: 60_000,
   });
+  const factStatus = useMutation({
+    mutationFn: ({ factId, status }: { factId: number; status: "done" | "dropped" | "open" }) =>
+      api<{ fact: { id: number; status: string } }>(`/facts/${factId}/status`, { method: "POST", json: { status, interactionId: recId } }),
+    onSuccess: ({ fact }) => {
+      qc.setQueryData<RecordingDetail>(["recording", recId], (old) => (old ? { ...old, facts: old.facts.map((f) => (f.id === fact.id ? { ...f, status: fact.status } : f)) } : old));
+    },
+  });
   const clipStatus = useMutation({
     mutationFn: ({ clipId, status }: { clipId: number; status: "approved" | "rejected" | "new" }) =>
       api<ClipCandidateItem>(`/clips/${clipId}`, { method: "PATCH", json: { status } }),
@@ -298,7 +305,7 @@ export default function RecordingPage() {
                 ) : (
                   <ul className="space-y-1.5">
                     {r.facts.map((f) => (
-                      <li key={f.id}>
+                      <li key={f.id} className="flex items-start gap-2">
                         <button
                           type="button"
                           onClick={() => f.quoteStartSec != null && seek(f.quoteStartSec)}
@@ -309,15 +316,34 @@ export default function RecordingPage() {
                           <span className="min-w-0 flex-1">
                             <span className="mr-2 inline-block"><Badge variant={f.status === "open" ? "warning" : "muted"}>{f.kind}</Badge></span>
                             {f.text}
-                            {(f.ownerParty || f.dueDate) && (
+                            {(f.ownerParty || f.dueDate || (f.status && f.status !== "open") || (f.sourceCount ?? 1) > 1) && (
                               <span className="mt-0.5 block text-xs text-muted-foreground">
-                                {f.ownerParty?.name}
-                                {f.ownerParty && f.dueDate ? " · " : ""}
-                                {f.dueDate ? `due ${f.dueDate}` : ""}
+                                {[f.ownerParty?.name, f.dueDate ? `due ${f.dueDate}` : null, (f.sourceCount ?? 1) > 1 ? `said in ${f.sourceCount} conversations` : null, f.status && f.status !== "open" ? f.status : null]
+                                  .filter(Boolean)
+                                  .join(" · ")}
                               </span>
                             )}
+                            {f.quote && <span className="mt-0.5 block text-xs italic text-muted-foreground">“{f.quote}”</span>}
                           </span>
                         </button>
+                        {owner && (
+                          <span className="flex shrink-0 gap-1 pt-1">
+                            {f.status === "open" ? (
+                              <>
+                                <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={factStatus.isPending} onClick={() => factStatus.mutate({ factId: f.id, status: "done" })} data-testid={`fact-done-${f.id}`}>
+                                  <Check className="mr-1 h-3.5 w-3.5" /> Done
+                                </Button>
+                                <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={factStatus.isPending} onClick={() => factStatus.mutate({ factId: f.id, status: "dropped" })} data-testid={`fact-drop-${f.id}`}>
+                                  Drop
+                                </Button>
+                              </>
+                            ) : (
+                              <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={factStatus.isPending} onClick={() => factStatus.mutate({ factId: f.id, status: "open" })} data-testid={`fact-reopen-${f.id}`}>
+                                Reopen
+                              </Button>
+                            )}
+                          </span>
+                        )}
                       </li>
                     ))}
                   </ul>
