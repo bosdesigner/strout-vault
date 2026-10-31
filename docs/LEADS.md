@@ -42,7 +42,7 @@ and so is any record with neither an email nor a phone.
 - **Leads** page (`/leads`, owner only): one row per person, newest first. Each row shows source,
   stage, status, the last call, and **no call yet** when nobody has talked to them since they came in.
   Filter by homeowner or contractor, or tick **Needs follow-up**.
-- **MCP `list_leads`**: the same list for agents, with `needs_follow_up`, `lead_type`, `since` and
+- **MCP `list_leads`**: the same list for agents, with `needs_follow_up`, `lead_type`, `since`, `until` (exclusive, for paging back: AnotherStoryBLDR's Airtable-only import walks the whole list this way) and
   `query`. `get_party` now includes a person's lead submissions.
 
 "Needs follow-up" means the latest status is not dead, converted, archived or lost, and there is no
