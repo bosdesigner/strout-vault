@@ -108,12 +108,10 @@ them on every import.
    once per Gmail account. The callback refuses any grant broader than `gmail.readonly` and stores
    the refresh token encrypted (AES-256-GCM). `GET /api/messages/accounts` lists accounts, their sync
    state and the latest runs.
-5. **The 10-minute sync.** The hourly worker runs the `gmail` step too, but email should not wait an
-   hour: make a third Repl from the repo (as for the worker, README step 6) with the worker's
-   secrets plus `WORKER_MODE=1` and `WORKER_STEPS=gmail,embed`, published as a Scheduled deployment
-   with cron `*/10 * * * *` and a 9-minute timeout. Those two steps take their own locks, so this run
-   never waits for (or doubles up with) the hourly one. A new account's first run only records where
-   Gmail's history is; the backfill fills in the past.
+5. **The near-real-time sync.** With the one-app setup (README step 6, `RUN_WORKER=1`), the `gmail` step runs
+   every 5 minutes alongside `link`, `classify` and `embed`. Those steps take their own locks, so this never
+   waits for (or doubles up with) the hourly full run. A new account's first run only records where Gmail's
+   history is; the backfill fills in the past.
 6. **Backfill**, by hand, from a Repl shell (the worker's is fine):
    ```bash
    npm run messages:gmail -- --account ben@example.com --since 30 --dry-run   # counts only, writes nothing

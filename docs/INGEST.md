@@ -34,14 +34,10 @@ total and last error, read from what each one actually wrote. A collector silent
 3. Check <https://strout-vault.replit.app/api/health>: `schema.version` starts with `v0.10`.
 4. Deploy the web Repl and the worker Repl (pull `main`, **Publish** in each).
 
-### B. Gmail: the 10-minute sync Repl (pending from docs/MESSAGES.md step 5)
+### B. Gmail: near-real-time sync (built in)
 
-1. <https://replit.com/import/github> → import `bosdesigner/strout-vault`, name it `strout-vault-messages`.
-2. Secrets: the worker Repl's (its Secrets tab → **Edit as .env** → copy all) plus `WORKER_MODE=1` and
-   `WORKER_STEPS=gmail,embed`.
-3. **Publish → Scheduled**, cron `*/10 * * * *`, timeout 9 minutes. Run it once from the deployment page.
-4. In the Shell: `git update-index --skip-worktree .replit` (README step 6.5).
-5. Sources: each Gmail row turns **live** within 10 minutes.
+With the one-app setup (README step 6, `RUN_WORKER=1` on the Reserved VM), Gmail, people linking, filing and
+embedding already run every 5 minutes. No separate Repl is needed. Sources: each Gmail row turns **live** within 5 minutes.
 
 ### C. Gmail: backfill each account (pending from docs/MESSAGES.md step 6), from the worker Repl's Shell
 
