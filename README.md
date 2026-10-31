@@ -15,9 +15,9 @@ One Node process serves the Express API and the React client. It reads and write
 Go to <https://replit.com/import/github> and import `bosdesigner/strout-vault`. The repo ships a `.replit` with:
 
 - workspace: `npm run dev` (API + client with hot reload, one process on `PORT`)
-- deployment: **Autoscale**, build `npm run build`, run `npm start`
+- deployment: **Reserved VM**, build `npm run build`, run `npm start` (the website and the worker in one app, step 6)
 
-`replit.nix` adds ffmpeg, which only the worker (step 6) uses; the web app needs nothing beyond the `nodejs-20` module.
+`replit.nix` adds ffmpeg, which the worker uses.
 
 ### 2. Add the Secrets
 
@@ -100,7 +100,7 @@ psql "$DATABASE_URL" -f db/migrations/0003_access_and_calls.sql
 
 ### 4. Click Deploy
 
-Replit → **Deploy** → Autoscale. The build runs `npm run build` (esbuild for the server, Vite for the client) and the deployment runs `npm start`.
+Replit → **Deploy** → **Reserved VM** (step 6 says why). The build runs `npm run build` (esbuild for the server, Vite for the client) and the deployment runs `npm start`.
 
 ### 5. Check `/api/health`
 
@@ -116,21 +116,32 @@ The same check also answers at `/healthz` for local development and other hosts.
 
 Then sign in at `/login` with `ADMIN_EMAIL` and your password.
 
-### 6. Deploy the worker (hourly)
+### 6. The worker runs inside the same app
 
-The worker is what used to be `vault run` on the Mac: every hour it asks Zoom for new cloud recordings, streams each file into the archive bucket (B2) with a SHA-256 check, transcribes whatever is waiting (Zoom's own transcript first, Groq only if allowed), processes uploads and phone calls, and writes a report you can read at **Pipeline** in the account menu. It runs once and exits, so it fits a Replit **Scheduled Deployment**. Replit runs one deployment per Repl, so the worker gets a second Repl made from the same repository:
+The worker is what used to be `vault run` on the Mac (meeting-vault): it pulls new Zoom and Meet
+recordings into the archive bucket (B2), transcribes them, syncs Gmail and leads, puts people on
+conversations, files them by content, extracts commitments and writes the report you read at
+**Pipeline**. Since 2026-10-31 it runs **in the website's own deployment**: one Repl, one deploy, one set of secrets.
 
-1. Go to <https://replit.com/import/github> again, import `bosdesigner/strout-vault`, and name the Repl `strout-vault-worker`.
-2. In its **Secrets** tab add the same secrets as the web app (everything in step 2, the Secrets panel's **Edit as .env** button copies them all at once) plus `WORKER_MODE=1`, `ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID` and `ZOOM_CLIENT_SECRET`. Paid steps are opt-in: `GROQ_API_KEY` + `GROQ_MONTHLY_BUDGET_USD` turn on transcription for recordings without Zoom captions, and `ANTHROPIC_API_KEY` + `SCOUT_MONTHLY_BUDGET_USD` turn on clip scouting. Without them the worker still archives Zoom recordings and uses Zoom's own transcripts. The B2 application key must have **Read and Write** access to the archive bucket: the website only reads, but the worker writes new originals there (B2 answers "not entitled" otherwise).
-3. Click **Publish**, choose **Scheduled** as the deployment type, and set the cron expression to `0 * * * *` (every hour) and the job timeout to 55 minutes. The build and run commands stay as the repo's `.replit` has them (`npm run build`, `npm start`): with `WORKER_MODE=1`, `npm start` runs the worker once and exits. The worker stops starting new work after `WORKER_TIME_BUDGET_SEC` (50 minutes) so runs never overlap, and a database lock guarantees it anyway.
-4. Run it once from the deployment page and open **Pipeline** in the web app: the run appears with what it found. The first run sweeps the last three months, matches the recordings meeting-vault already archived by Zoom UUID and downloads nothing twice.
-5. **Keep the two Repls' settings apart.** Replit writes the deployment type into `.replit` when you publish, and its automatic "Published your App" commits push that file to GitHub, where the other Repl would pull it and flip its own deployment type. Once each Repl is published the way you want, run this in **both** Shells so git leaves that Repl's copy alone in both directions:
-   ```bash
-   git update-index --skip-worktree .replit
-   ```
-   The committed `.replit` stays the website's (autoscale). If a later pull ever complains about `.replit`, run `git update-index --no-skip-worktree .replit && git checkout .replit`, pull, set the deployment type again in the Publishing pane, and re-run the command above.
+1. In the Repl's **Secrets** add `RUN_WORKER=1`, plus the worker's own secrets if they are not there yet:
+   `ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET`, and the paid steps you use (`GROQ_API_KEY` +
+   `GROQ_MONTHLY_BUDGET_USD`; `ANTHROPIC_API_KEY` with `SCOUT_`, `EXTRACT_`, `FOLLOWTHROUGH_` and
+   `CLASSIFY_MONTHLY_BUDGET_USD`; `LEADS_DATABASE_URL`, `AIRTABLE_TOKEN`). The B2 application key must have
+   **Read and Write** access to the archive bucket. **Do not set `WORKER_MODE=1` here**: that makes `npm start` run
+   the worker alone and serve no website.
+2. **Publish → Reserved VM** (an always-on machine; 1 vCPU / 4 GB covers ffmpeg). Autoscale cannot host the worker:
+   it sleeps between requests and cannot run a 50-minute job.
+3. With `RUN_WORKER=1`, `npm start` serves the website and supervises two worker loops in the background:
+   the **full pipeline every 60 minutes** (`WORKER_EVERY_MIN`) and the **light steps every 5 minutes**
+   (`gmail, link, classify, embed`; `WORKER_LIGHT_EVERY_MIN`, `0` turns it off). Database locks keep them from
+   overlapping each other or a run started by hand, and a loop that crashes is restarted after a minute.
+   A redeploy starts a full run straight away.
+4. Open **Pipeline** after a few minutes: runs show up with trigger `manual` (the loop) every 5 and 60 minutes.
 
-Useful from the worker Repl's shell: `npm run worker:dev -- --report` (the pipeline report as JSON), `npm run worker:dev -- --dry-run` (enumerate Zoom, download nothing), `npm run worker:dev -- --steps transcribe`.
+The earlier setup (a second Repl `strout-vault-worker` published as a Scheduled deployment with `WORKER_MODE=1`)
+still works, but run only one of the two: shut the Scheduled deployment down before turning on `RUN_WORKER=1`.
+
+Useful from the Repl's shell: `npm run worker:dev -- --report` (the pipeline report as JSON), `npm run worker:dev -- --dry-run` (enumerate Zoom, download nothing), `npm run worker:dev -- --steps transcribe`.
 
 ---
 

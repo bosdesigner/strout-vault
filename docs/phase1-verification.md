@@ -207,8 +207,9 @@ whose duration is over a second; not changed here.
 - **Gmail** is pulled only by the hourly worker today. The 10-minute messages deployment in
   [MESSAGES.md](MESSAGES.md) step 5 (`WORKER_STEPS=gmail,embed`) was never published: every
   `worker_runs` row is on the hour.
-- **Recommendation:** publish a third Scheduled Deployment (a Repl from the same repo) every 5 minutes
-  with `WORKER_MODE=1` and `WORKER_STEPS=gmail,link,classify,embed`. These are the light steps: each takes
+- **Done (2026-10-31):** the website and worker were combined into one Reserved VM app (README step 6),
+  which runs `gmail,link,classify,embed` every 5 minutes and the full pipeline hourly. (The original
+  recommendation was a third Scheduled Deployment with `WORKER_MODE=1` and `WORKER_STEPS=gmail,link,classify,embed`.) These are the light steps: each takes
   its own advisory lock, so they never overlap with each other or with the hourly run, which keeps
   transcription, extraction and follow-through.
 - **Cost flag:** 288 runs a day. Replit bills Scheduled Deployments per compute-second, and each light run

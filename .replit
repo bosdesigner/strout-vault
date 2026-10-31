@@ -2,13 +2,10 @@
 # Workspace: `npm run dev` serves API + client from one process on PORT.
 # Deployment: build once, then `npm start` serves dist/ on PORT (the website).
 #
-# The worker is a second Repl of this same repository published as a Scheduled
-# deployment with the secret WORKER_MODE=1. Replit writes the deployment type
-# into this file when you publish, and its automatic "Published your App"
-# commits would push that to GitHub. So in each Repl, after the first publish:
-#     git update-index --skip-worktree .replit
-# Git then leaves that Repl's copy of this file alone, in both directions.
-# This committed version is the website's (autoscale).
+# One Repl runs everything: publish it as a Reserved VM with the secret RUN_WORKER=1
+# and `npm start` serves the website and runs the worker loops (README step 6).
+# Replit writes the deployment type into this file when you publish; if that ever
+# conflicts on a pull, keep the Repl's own copy (git checkout --ours .replit).
 run = "npm run dev"
 entrypoint = "server/index.ts"
 modules = ["nodejs-20"]
