@@ -29,6 +29,7 @@ import { normalizeIdentifier, ownerIdentity, isOwner, normalizeEmail, type Owner
 import { listMeetAccounts, meetClientFor } from "../meet/sync.ts";
 import { CALENDAR_EVENTS_READONLY_SCOPE, type MeetClient } from "../meet/api.ts";
 import { firstLastKey, isOwnerName, normalizeName, parseTitle, looksLikeName, displayName } from "../workspaces/titles.ts";
+import { tryAdvisoryLock } from "../db/locks.ts";
 
 export const LINK_LOCK = "strout-vault-link";
 const ZOOM_PARTICIPANTS_STATE = "zoom_participants_api";
@@ -258,11 +259,9 @@ const SOURCE_CONFIDENCE: Record<string, number> = { zoom_api: 0.95, registrant: 
 
 export async function processLink(ctx: WorkerContext, opts: { ids?: number[]; limit?: number } = {}): Promise<LinkSummary> {
   const summary: LinkSummary = { candidates: 0, linked: 0, bySource: {}, suggested: 0, retitled: 0, zoomApi: "off", calendar: "off", failed: 0, errors: [] };
-  const lock = await ctx.pool.connect();
-  let locked = false;
+  const lock = await tryAdvisoryLock(ctx.pool, LINK_LOCK);
   try {
-    locked = !!(await lock.query<{ ok: boolean }>(`select pg_try_advisory_lock(hashtext($1)) as ok`, [LINK_LOCK])).rows[0]?.ok;
-    if (!locked) {
+    if (!lock) {
       summary.stoppedEarly = "another link step is running";
       return summary;
     }
@@ -373,8 +372,7 @@ export async function processLink(ctx: WorkerContext, opts: { ids?: number[]; li
     );
     return summary;
   } finally {
-    if (locked) await lock.query(`select pg_advisory_unlock(hashtext($1))`, [LINK_LOCK]).catch(() => {});
-    lock.release();
+    await lock?.release();
   }
 }
 

@@ -19,6 +19,7 @@ import { ownerIdentity } from "../identity.ts";
 import { loadMessageRules, type MessageRules } from "../rules.ts";
 import { GmailApiError, GmailClient } from "./api.ts";
 import { gmailThreadInput } from "./parse.ts";
+import { tryAdvisoryLock } from "../../db/locks.ts";
 
 export interface GmailAccount {
   id: number;
@@ -246,11 +247,9 @@ export async function syncGmail(deps: GmailDeps, opts: { dryRun?: boolean; email
     summary.skipped = "no Gmail account connected";
     return summary;
   }
-  const lock = await deps.pool.connect();
-  let locked = false;
+  const lock = await tryAdvisoryLock(deps.pool, LOCK_NAME);
   try {
-    locked = !!(await lock.query<{ ok: boolean }>(`select pg_try_advisory_lock(hashtext($1)) as ok`, [LOCK_NAME])).rows[0]?.ok;
-    if (!locked) {
+    if (!lock) {
       summary.skipped = "another Gmail sync is running";
       return summary;
     }
@@ -277,7 +276,6 @@ export async function syncGmail(deps: GmailDeps, opts: { dryRun?: boolean; email
     if (!opts.dryRun) await recordImportRun(deps.pool, "gmail", summary.ingest, { mode: "incremental", accounts: summary.accounts });
     return summary;
   } finally {
-    if (locked) await lock.query(`select pg_advisory_unlock(hashtext($1))`, [LOCK_NAME]).catch(() => {});
-    lock.release();
+    await lock?.release();
   }
 }

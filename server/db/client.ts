@@ -39,7 +39,7 @@ export function createDb(databaseUrl: string): DbHandle {
   };
 }
 
-function needsSsl(url: string): boolean {
+export function needsSsl(url: string): boolean {
   try {
     const u = new URL(url);
     if (u.searchParams.get("sslmode") === "disable") return false;

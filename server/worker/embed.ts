@@ -7,6 +7,7 @@ import type { WorkerContext } from "./context.ts";
 import { outOfTime } from "./context.ts";
 import { createEmbeddingProvider, type EmbeddingProvider } from "../embeddings/provider.ts";
 import { embedInteraction, listEmbedCandidates, type EmbedCandidate } from "../embeddings/pipeline.ts";
+import { tryAdvisoryLock } from "../db/locks.ts";
 
 export interface EmbedSummary {
   configured: boolean;
@@ -45,18 +46,15 @@ export async function processEmbeddings(ctx: WorkerContext, providerOverride?: E
 
   // The hourly run and the 10-minute messages run both embed; two runs rebuilding the same
   // recording's chunks at once could leave both sets behind, so only one embeds at a time.
-  const lock = await ctx.pool.connect();
-  let locked = false;
+  const lock = await tryAdvisoryLock(ctx.pool, "strout-vault-embed");
   try {
-    locked = !!(await lock.query<{ ok: boolean }>(`select pg_try_advisory_lock(hashtext('strout-vault-embed')) as ok`)).rows[0]?.ok;
-    if (!locked) {
+    if (!lock) {
       summary.stoppedEarly = "another embedding run is in progress";
       return summary;
     }
     await embedCandidates(ctx, provider, candidates, summary);
   } finally {
-    if (locked) await lock.query(`select pg_advisory_unlock(hashtext('strout-vault-embed'))`).catch(() => {});
-    lock.release();
+    await lock?.release();
   }
   summary.estimatedUsd = (summary.tokens / 1_000_000) * provider.usdPerMillionTokens;
   return summary;

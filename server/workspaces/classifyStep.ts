@@ -24,6 +24,7 @@ import { ownerIdentity } from "../messages/identity.ts";
 import { loadMessageRules, type MessageRules } from "../messages/rules.ts";
 import { decideWorkspace, phalanxPgPatterns, phalanxTerms, INBOX_WS, type ClassifyDecision, type ClassifySignals, type LlmVerdict } from "./route.ts";
 import { WORKSPACE_ITEM_TYPE } from "./propose.ts";
+import { tryAdvisoryLock } from "../db/locks.ts";
 
 export const CLASSIFY_PROVIDER = "anthropic-classify";
 /** Characters of each interaction's text Claude reads. */
@@ -302,15 +303,12 @@ export const CLASSIFY_LOCK = "strout-vault-classify";
 
 /** The step, under its own advisory lock: the hourly run and the 5-minute run never classify (or pay for) the same item twice. */
 export async function processClassify(ctx: WorkerContext, opts: { ids?: number[]; limit?: number; rules?: MessageRules } = {}): Promise<ClassifySummary> {
-  const lock = await ctx.pool.connect();
-  let locked = false;
+  const lock = await tryAdvisoryLock(ctx.pool, CLASSIFY_LOCK);
   try {
-    locked = !!(await lock.query<{ ok: boolean }>(`select pg_try_advisory_lock(hashtext($1)) as ok`, [CLASSIFY_LOCK])).rows[0]?.ok;
-    if (!locked) return { ...emptyClassifySummary(ctx), stoppedEarly: "another classify step is running" };
+    if (!lock) return { ...emptyClassifySummary(ctx), stoppedEarly: "another classify step is running" };
     return await classifyLocked(ctx, opts);
   } finally {
-    if (locked) await lock.query(`select pg_advisory_unlock(hashtext($1))`, [CLASSIFY_LOCK]).catch(() => {});
-    lock.release();
+    await lock?.release();
   }
 }
 
