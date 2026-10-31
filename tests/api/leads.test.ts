@@ -251,6 +251,24 @@ describe("reading leads", () => {
     expect(none.count).toBe(0);
   });
 
+  it("list_leads pages back with until: every person exactly once, newest first", async () => {
+    const args = { workspace: undefined, lead_type: undefined, since: undefined, needs_follow_up: undefined, query: undefined };
+    const everyone = (await listLeads.run({ ...args, until: undefined, limit: 50 }, toolCtx(["another_story"]))).result.items as Array<{ party_id: number; latest_submission: string | null }>;
+    expect(everyone.length).toBeGreaterThan(2);
+    const seen: number[] = [];
+    let until: string | undefined;
+    for (let guard = 0; guard < everyone.length + 2; guard++) {
+      const page = (await listLeads.run({ ...args, until, limit: 1 }, toolCtx(["another_story"]))).result.items as Array<{ party_id: number; latest_submission: string | null }>;
+      if (!page.length || !page[0].latest_submission) break;
+      if (until) expect(new Date(page[0].latest_submission).getTime()).toBeLessThan(new Date(until).getTime());
+      seen.push(page[0].party_id);
+      until = page[0].latest_submission;
+    }
+    const dated = everyone.filter((i) => i.latest_submission).map((i) => i.party_id);
+    expect(seen).toEqual(dated);
+    await expect(listLeads.run({ ...args, until: "not a date", limit: 1 }, toolCtx(["another_story"]))).rejects.toThrow(/until must be/);
+  });
+
   it("approving the call link takes the lead off the follow-up list", async () => {
     const item = await one<{ id: number }>(`select id from review_queue where proposal->>'source' = 'leads'`);
     const { decideReview } = await import("../../server/services/review.ts");

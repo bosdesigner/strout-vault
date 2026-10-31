@@ -12,6 +12,11 @@ const schema = {
   workspace: workspaceArg,
   lead_type: z.enum(["homeowner", "contractor", "other"]).optional().describe("Only homeowner leads (renovation clients) or contractor leads (franchise / network recruits)."),
   since: z.string().regex(/^\d{4}-\d{2}-\d{2}/, "YYYY-MM-DD or an ISO timestamp").optional().describe("Only people whose latest lead came in on or after this date."),
+  until: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}/, "YYYY-MM-DD or an ISO timestamp")
+    .optional()
+    .describe("Only people whose latest lead came in before this date or time (exclusive). To page back through a long list, pass the oldest latest_submission of the previous page."),
   needs_follow_up: z
     .boolean()
     .optional()
@@ -47,6 +52,7 @@ export const listLeads: ToolDef<typeof schema> = {
     }
     const having: string[] = [];
     if (args.since) having.push(`max(lr.submitted_at) >= ${p(parseDate(args.since, "since"))}`);
+    if (args.until) having.push(`max(lr.submitted_at) < ${p(parseDate(args.until, "until"))}`);
     if (args.needs_follow_up) {
       having.push(`not (lower(coalesce((array_agg(lr.status order by lr.submitted_at desc nulls last))[1], '')) = any(${p(CLOSED)}::text[]))`);
       having.push(`coalesce(max(conv.occurred_at), 'epoch') < coalesce(max(lr.submitted_at), now())`);
