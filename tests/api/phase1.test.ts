@@ -19,6 +19,7 @@ import { runWorker, formatRunSummary } from "../../server/worker/run.ts";
 import { CLASSIFY_SYSTEM_PROMPT } from "../../server/workspaces/classifyStep.ts";
 import { FakeEmbeddingProvider } from "../../server/embeddings/fake.ts";
 import { buildTestApp, login, type Session, type TestApp } from "../helpers.ts";
+import { directUrl, tryAdvisoryLock } from "../../server/db/locks.ts";
 
 const PORT = 3996;
 const BASE = `http://localhost:${PORT}`;
@@ -204,6 +205,21 @@ describe("classify step", () => {
     // Every candidate is classified once: nothing is read again.
     const again = await runWorker(makeCtx(makeConfig()), { trigger: "test", steps: ["classify"] });
     expect(again.summary.classify!.candidates).toBe(0);
+  });
+});
+
+describe("worker locks", () => {
+  it("are held on a direct connection, exclusive while held, and free again after release", async () => {
+    expect(directUrl("postgres://u:p@ep-cool-name-123-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require")).toBe("postgres://u:p@ep-cool-name-123.us-east-1.aws.neon.tech/neondb?sslmode=require");
+    const a = await tryAdvisoryLock(pool, "phase1-test-lock");
+    expect(a).not.toBeNull();
+    expect(await tryAdvisoryLock(pool, "phase1-test-lock")).toBeNull();
+    await a!.release();
+    const b = await tryAdvisoryLock(pool, "phase1-test-lock");
+    expect(b).not.toBeNull();
+    await b!.release();
+    const held = await one<{ n: number }>(`select count(*)::int as n from pg_locks where locktype = 'advisory' and objid = hashtext('phase1-test-lock')::oid`);
+    expect(held.n).toBe(0);
   });
 });
 

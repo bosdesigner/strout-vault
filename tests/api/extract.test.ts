@@ -202,7 +202,7 @@ describe("approving a proposal applies it", () => {
     expect(out.item.status).toBe("approved");
     expect(out.applied[0]).toMatch(/^facts #\d+$/);
     const fact = await one(`select * from facts where source_review_id = $1`, [item.id]);
-    expect(fact).toMatchObject({ kind: "commitment", text: item.proposal.text, status: "open", interaction_id: String(item.interaction_id) });
+    expect(fact).toMatchObject({ kind: "commitment", text: item.proposal.text, status: "open", interaction_id: item.interaction_id });
     expect(fact.workspace_id).toBe(item.proposal.workspace_id);
     expect(new Date(fact.due_date as string).toISOString().slice(0, 10)).toBe("2026-11-02");
   });

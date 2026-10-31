@@ -24,6 +24,7 @@ import type { LeadSyncSummary } from "../leads/sync.ts";
 import { processCuts, type CutSummary } from "./cut.ts";
 import { buildReport, type PipelineReport } from "./report.ts";
 import { setState } from "./sync.ts";
+import { tryAdvisoryLock } from "../db/locks.ts";
 
 export type Step = "zoom" | "meet" | "leads" | "gmail" | "transcribe" | "link" | "refile" | "classify" | "embed" | "extract" | "followthrough" | "scout" | "cut" | "report";
 /**
@@ -148,14 +149,11 @@ export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Prom
   const startedAt = ctx.now();
   const summary: RunSummary = { durationSec: 0, errors: [], config: configSnapshot(ctx) };
 
-  // One run at a time, across machines: a session-level advisory lock.
-  const lockClient = await ctx.pool.connect();
-  let locked = false;
+  // One run at a time, across machines: an advisory lock on its own direct connection (db/locks.ts).
+  const lockName = steps.every((s) => LIGHT_STEPS.includes(s)) ? LIGHT_LOCK_NAME : LOCK_NAME;
+  const lock = await tryAdvisoryLock(ctx.pool, lockName);
   try {
-    const lockName = steps.every((s) => LIGHT_STEPS.includes(s)) ? LIGHT_LOCK_NAME : LOCK_NAME;
-    const r = await lockClient.query<{ ok: boolean }>(`select pg_try_advisory_lock(hashtext($1)) as ok`, [lockName]);
-    locked = !!r.rows[0]?.ok;
-    if (!locked) {
+    if (!lock) {
       ctx.log("another worker run holds the lock; skipping this run");
       summary.skipped = "locked";
       const ins = await ctx.pool.query<{ id: number }>(
@@ -208,8 +206,7 @@ export async function runWorker(ctx: WorkerContext, opts: RunOptions = {}): Prom
     ctx.log(`run #${runId} ${ok ? "finished" : "finished with errors"} in ${summary.durationSec}s`);
     return { runId, ok, summary };
   } finally {
-    if (locked) await lockClient.query(`select pg_advisory_unlock(hashtext($1))`, [steps.every((s) => LIGHT_STEPS.includes(s)) ? LIGHT_LOCK_NAME : LOCK_NAME]).catch(() => {});
-    lockClient.release();
+    await lock?.release();
   }
 }
 
