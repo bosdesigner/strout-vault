@@ -27,10 +27,11 @@ import { setState } from "./sync.ts";
 
 export type Step = "zoom" | "meet" | "leads" | "gmail" | "transcribe" | "link" | "refile" | "classify" | "embed" | "extract" | "followthrough" | "scout" | "cut" | "report";
 /**
- * Ingest, then transcribe, then people (link) and filing (refile by known people, then the content
- * classifier), and only then extraction, so every conversation is read under the workspace it belongs to.
+ * Ingest, then transcribe, then people (link) and filing (the content classifier with its phalanx guard
+ * first, then refile by known people, which never touches what the guard parked in inbox), and only then
+ * extraction, so every conversation is read under the workspace it belongs to.
  */
-export const ALL_STEPS: Step[] = ["zoom", "meet", "leads", "gmail", "transcribe", "link", "refile", "classify", "embed", "extract", "followthrough", "scout", "cut", "report"];
+export const ALL_STEPS: Step[] = ["zoom", "meet", "leads", "gmail", "transcribe", "link", "classify", "refile", "embed", "extract", "followthrough", "scout", "cut", "report"];
 /**
  * Steps a run may do without the main worker lock: the 10-minute messages deployment runs
  * "gmail,embed" while the hourly run may still be transcribing. Each of those steps takes its
