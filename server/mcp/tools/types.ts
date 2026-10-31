@@ -16,6 +16,11 @@ export interface ToolContext {
   publicUrl: string;
   embeddings: EmbeddingProvider | null;
   now: () => Date;
+  /**
+   * The app's own connection, used only by propose_update to run the auto-apply rules on the row it
+   * just queued (services/autoApply.ts). null keeps every proposal queued.
+   */
+  autoApply?: { pool: pg.Pool; enabled: boolean; minConfidence: number } | null;
 }
 
 export interface ToolOutput {

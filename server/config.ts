@@ -97,6 +97,10 @@ const envSchema = z.object({
   // Phase 1 v2: facts at this confidence or more are written straight to `facts` (status open);
   // between EXTRACT_MIN_CONFIDENCE and this they go to Review as before.
   EXTRACT_FACT_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.8),
+  // Auto-apply (docs/AUTO-APPLY.md): additive proposals backed by their source apply on arrival
+  // (propose_update, the extractor); everything else queues. off = every proposal queues, as before.
+  AUTO_APPLY: z.enum(["on", "off"]).default("on"),
+  AUTO_APPLY_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.85),
   // The backfill reads the last N days first (newest first), then older items back to EXTRACT_MAX_AGE_DAYS.
   EXTRACT_RECENT_DAYS: z.coerce.number().int().min(1).default(30),
   EXTRACT_MAX_AGE_DAYS: z.coerce.number().int().min(1).default(365),

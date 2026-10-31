@@ -4,6 +4,8 @@ import type { AppContext } from "../context.ts";
 import { countOpenReview, decideReview, decideReviewBulk, listReview, ReviewError, updateDraft } from "../services/review.ts";
 import { intId, parse, wrap } from "./util.ts";
 import { refileAfterChange } from "../workspaces/refileHook.ts";
+import { listAutoApplied, undoAutoApply } from "../services/autoApply.ts";
+import { UndoError } from "../services/undo.ts";
 
 /** Approvals that can make a thread's people known; Inbox is re-filed after them. */
 const REFILE_AFTER = new Set(["new_party", "participant_match", "link_party_interaction", "party_edit"]);
@@ -25,6 +27,39 @@ export function reviewRouter(ctx: AppContext): Router {
     "/count",
     wrap(async (req, res) => {
       res.json({ openCount: await countOpenReview(ctx.pool, typeof req.query.workspace === "string" ? req.query.workspace : null) });
+    }),
+  );
+  // What the auto-apply rules applied (docs/AUTO-APPLY.md): the Review page's Auto-applied tab.
+  r.get(
+    "/auto-applied",
+    wrap(async (req, res) => {
+      const q = parse(z.object({ days: z.coerce.number().int().min(1).max(90).optional(), workspace: z.string().max(100).optional() }), req.query);
+      try {
+        res.json({ items: await listAutoApplied(ctx.pool, { days: q.days ?? 7, workspaceId: q.workspace ?? null }) });
+      } catch (err) {
+        // Before db/migrations/0014_auto_apply.sql is applied there is no log yet.
+        if ((err as { code?: string }).code === "42P01") {
+          res.json({ items: [], unavailable: true });
+          return;
+        }
+        throw err;
+      }
+    }),
+  );
+  r.post(
+    "/auto-applied/:id/undo",
+    wrap(async (req, res) => {
+      const id = intId(req.params.id);
+      try {
+        const out = await undoAutoApply(ctx.pool, id, req.session?.email ?? "owner");
+        res.json(out);
+      } catch (err) {
+        if (err instanceof UndoError) {
+          res.status(err.status).json({ error: err.message });
+          return;
+        }
+        throw err;
+      }
     }),
   );
   // Approve or reject many items at once (the Review page's "Approve all workspace proposals").

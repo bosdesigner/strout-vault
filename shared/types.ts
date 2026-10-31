@@ -233,6 +233,26 @@ export interface ReviewItem {
   speakerLabel: string | null;
   startSec: number | null;
   confidence: number | null;
+  /** owner | auto | undo; null on items decided before auto-apply existed. */
+  decidedBy?: string | null;
+  /** The auto-apply rules' verdict on the item: {auto, rule, reasons, quote, confidence}. */
+  route?: { auto?: boolean; rule?: string; reasons?: string[]; quote?: string | null; confidence?: number | null } | null;
+}
+
+/** One auto-applied proposal (Review → Auto-applied). */
+export interface AutoAppliedItem {
+  id: number;
+  reviewId: number;
+  itemType: string;
+  rule: string;
+  sourceQuote: string | null;
+  confidence: number | null;
+  applied: string[];
+  actor: string | null;
+  createdAt: string;
+  undoneAt: string | null;
+  undoneBy: string | null;
+  item: ReviewItem | null;
 }
 
 export interface SearchLinePart {

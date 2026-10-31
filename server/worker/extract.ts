@@ -27,6 +27,7 @@ import { parseStoredScope, resolveScope } from "../mcp/scope.ts";
 import { PROPOSAL_SCHEMAS } from "../mcp/tools/propose.ts";
 import { pickDueDate } from "../facts/dates.ts";
 import { recordFact } from "../facts/store.ts";
+import { routeReviewItem } from "../services/autoApply.ts";
 
 export const EXTRACT_PROVIDER = "anthropic-extract";
 export const THREAD_KINDS = ["text_thread", "email_thread", "dm_thread"] as const;
@@ -657,6 +658,7 @@ export async function extractRecording(
   const found: Proposal[] = [];
   let costUsd = 0;
   const queued = { facts: 0, speakers: 0, projects: 0 };
+  let autoApplied = 0;
   const facts = { created: 0, linked: 0 };
   try {
     await readChunks();
@@ -670,7 +672,7 @@ export async function extractRecording(
         interactionId,
         unitsSec: null,
         usd: costUsd,
-        note: `${chunks.length} chunk(s), ${facts.created} fact(s) + ${facts.linked} linked, ${queued.facts + queued.speakers + queued.projects} proposal(s)`,
+        note: `${chunks.length} chunk(s), ${facts.created} fact(s) + ${facts.linked} linked, ${queued.facts + queued.speakers + queued.projects} proposal(s), ${autoApplied} auto-applied`,
       });
     }
   }
@@ -756,13 +758,16 @@ export async function extractRecording(
         // Same shapes as the MCP tool, so approval goes through one code path.
         const valid = PROPOSAL_SCHEMAS[p.itemType].safeParse(p.proposal);
         if (!valid.success) continue;
-        await db.query(`insert into review_queue (item_type, proposal, reason, interaction_id, status) values ($1, $2::jsonb, $3, $4, 'open')`, [
+        const ins = await db.query<{ id: number }>(`insert into review_queue (item_type, proposal, reason, interaction_id, status) values ($1, $2::jsonb, $3, $4, 'open') returning id`, [
           p.itemType,
           JSON.stringify({ ...(valid.data as Record<string, unknown>), ...stamped }),
           p.reason,
           interactionId,
         ]);
         taken.add(p.key);
+        // The auto-apply rules (docs/AUTO-APPLY.md): a speaker or project link the transcript itself backs applies now, logged with an undo.
+        const routed = await routeReviewItem(db, Number(ins.rows[0].id), { actor: "extract", enabled: ctx.config.AUTO_APPLY === "on", minConfidence: ctx.config.AUTO_APPLY_MIN_CONFIDENCE });
+        if (routed.applied) autoApplied++;
         if (p.itemType === "new_fact") queued.facts++;
         else if (p.itemType === "link_party_interaction") queued.speakers++;
         else queued.projects++;

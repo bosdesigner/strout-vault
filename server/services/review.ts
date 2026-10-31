@@ -2,6 +2,7 @@ import type pg from "pg";
 import { recordFact } from "../facts/store.ts";
 import { z } from "zod";
 import { PROPOSAL_SCHEMAS, type ProposalType } from "../mcp/tools/propose.ts";
+import type { UndoOp } from "./undo.ts";
 
 export interface ReviewItem {
   id: number;
@@ -17,6 +18,10 @@ export interface ReviewItem {
   speakerLabel: string | null;
   startSec: number | null;
   confidence: number | null;
+  /** owner | auto | undo (null on items decided before v0.14). */
+  decidedBy: string | null;
+  /** The auto-apply rules' verdict ({auto, rule, reasons, ...}) when they have looked at the item. */
+  route: Record<string, unknown> | null;
 }
 
 function num(v: unknown): number | null {
@@ -34,8 +39,7 @@ export async function listReview(pool: pg.Pool, f: { status?: string | null; wor
   if (f.status && f.status !== "all") where.push(`rq.status = ${p(f.status)}`);
   if (f.workspaceId) where.push(`i.workspace_id = ${p(f.workspaceId)}`);
   const { rows } = await pool.query(
-    `select rq.id, rq.item_type, rq.proposal, rq.reason, rq.status, rq.created_at, rq.decided_at,
-            i.id as interaction_id, i.title, i.occurred_at, i.workspace_id,
+    `select rq.*, i.id as interaction_id, i.title, i.occurred_at, i.workspace_id,
             pa.id as party_id, pa.name as party_name, pr.id as project_id, pr.name as project_name
      from review_queue rq
      left join interactions i on i.id = rq.interaction_id
@@ -67,6 +71,8 @@ function toItem(r: Record<string, unknown>): ReviewItem {
     speakerLabel: (proposal.speaker_label as string | undefined) ?? null,
     startSec: num(proposal.start_sec ?? proposal.quote_start_sec),
     confidence: num(proposal.confidence),
+    decidedBy: (r.decided_by as string | null | undefined) ?? null,
+    route: (r.route as Record<string, unknown> | null | undefined) ?? null,
   };
 }
 
@@ -149,7 +155,7 @@ export async function decideReview(pool: pg.Pool, id: number, decision: "approve
       }
     }
     const updated = await client.query(
-      `update review_queue set status = $2, decided_at = now() where id = $1 returning *`,
+      (await hasDecidedBy(client)) ? `update review_queue set status = $2, decided_at = now(), decided_by = 'owner' where id = $1 returning *` : `update review_queue set status = $2, decided_at = now() where id = $1 returning *`,
       [id, decision === "approve" ? "approved" : "rejected"],
     );
     await client.query("commit");
@@ -177,10 +183,19 @@ export async function decideReviewBulk(pool: pg.Pool, ids: number[], decision: "
   return out;
 }
 
-async function listReviewById(pool: pg.Pool, id: number): Promise<ReviewItem | null> {
+let decidedByColumn: boolean | null = null;
+/** review_queue.decided_by arrives with 0014; before it is applied, decisions are written as before. */
+async function hasDecidedBy(db: pg.Pool | pg.PoolClient): Promise<boolean> {
+  if (decidedByColumn === null) {
+    const { rowCount } = await db.query(`select 1 from information_schema.columns where table_name = 'review_queue' and column_name = 'decided_by' and table_schema = current_schema()`);
+    decidedByColumn = !!rowCount;
+  }
+  return decidedByColumn;
+}
+
+export async function listReviewById(pool: pg.Pool | pg.PoolClient, id: number): Promise<ReviewItem | null> {
   const { rows } = await pool.query(
-    `select rq.id, rq.item_type, rq.proposal, rq.reason, rq.status, rq.created_at, rq.decided_at,
-            i.id as interaction_id, i.title, i.occurred_at, i.workspace_id, pa.id as party_id, pa.name as party_name, pr.id as project_id, pr.name as project_name
+    `select rq.*, i.id as interaction_id, i.title, i.occurred_at, i.workspace_id, pa.id as party_id, pa.name as party_name, pr.id as project_id, pr.name as project_name
      from review_queue rq
      left join interactions i on i.id = rq.interaction_id
      left join parties pa on pa.id = nullif(rq.proposal->>'party_id', '')::bigint
@@ -191,11 +206,16 @@ async function listReviewById(pool: pg.Pool, id: number): Promise<ReviewItem | n
   return rows[0] ? toItem(rows[0]) : null;
 }
 
-type Applier = (db: pg.PoolClient, proposal: Record<string, unknown>, row: Record<string, unknown>) => Promise<string[]>;
+/**
+ * Applies one proposal inside the caller's transaction. When `undo` is given, every row written is
+ * recorded there as the step that reverses it (services/undo.ts replays them last-first); the
+ * auto-apply path passes it, the Review page's approve does not need to.
+ */
+export type Applier = (db: pg.PoolClient, proposal: Record<string, unknown>, row: Record<string, unknown>, undo?: UndoOp[]) => Promise<string[]>;
 
 /** Re-validates a stored proposal (the shapes are the propose_update tool's) and strips the bookkeeping fields. */
 function shape<T extends ProposalType>(type: T, proposal: Record<string, unknown>): Record<string, unknown> {
-  const { source: _s, proposed_by: _b, token_id: _t, proposed_at: _a, model: _m, evidence: _e, ...rest } = proposal;
+  const { source: _s, proposed_by: _b, token_id: _t, proposed_at: _a, model: _m, evidence: _e, source_quote: _q, ...rest } = proposal;
   const parsed = PROPOSAL_SCHEMAS[type].safeParse(rest);
   if (!parsed.success) throw new ReviewError(400, `proposal no longer matches the ${type} shape: ${parsed.error.issues.map((i) => `${i.path.join(".") || "proposal"} ${i.message}`).join("; ")}`);
   return parsed.data as Record<string, unknown>;
@@ -222,22 +242,26 @@ function uniqueList(existing: unknown, add: unknown): string[] {
  * are in lists them as a participant. Workspaces are not re-routed; inbox threads keep their own
  * workspace_assignment review rows.
  */
-async function linkMessageSender(db: pg.PoolClient, partyId: number, identifier: string, name: string): Promise<string[]> {
+async function linkMessageSender(db: pg.PoolClient, partyId: number, identifier: string, name: string, undo?: UndoOp[]): Promise<string[]> {
   const threads = await db.query<{ id: number }>(
     `select id from interactions where kind in ('text_thread', 'email_thread') and participants_raw @> $1::jsonb`,
     [JSON.stringify([{ identifier }])],
   );
   const ids = threads.rows.map((r) => Number(r.id));
   if (!ids.length) return [];
-  const seg = await db.query(
+  const seg = await db.query<{ id: number }>(
     `update segments s set speaker_party_id = $2
        from interactions i cross join lateral jsonb_array_elements(i.source_payload->'messages') m
-      where i.id = any($1::bigint[]) and s.interaction_id = i.id and (m->>'idx')::int = s.idx and m->>'from' = $3 and s.speaker_party_id is null`,
+      where i.id = any($1::bigint[]) and s.interaction_id = i.id and (m->>'idx')::int = s.idx and m->>'from' = $3 and s.speaker_party_id is null
+      returning s.id`,
     [ids, partyId, identifier],
   );
+  undo?.push({ op: "segments_unassign", ids: seg.rows.map((r) => Number(r.id)), party_id: partyId });
   for (const id of ids) {
-    await db.query(`insert into interaction_participants (interaction_id, party_id, speaker_label, confidence) values ($1, $2, $3, 1) on conflict (interaction_id, party_id) do nothing`, [id, partyId, name]);
+    const ins = await db.query(`insert into interaction_participants (interaction_id, party_id, speaker_label, confidence) values ($1, $2, $3, 1) on conflict (interaction_id, party_id) do nothing`, [id, partyId, name]);
+    if (ins.rowCount) undo?.push({ op: "delete", table: "interaction_participants", where: { interaction_id: id, party_id: partyId } });
   }
+  undo?.push({ op: "participants_raw_unset", interaction_ids: ids, identifier, party_id: partyId });
   await db.query(
     `update interactions set participants_raw = (
         select jsonb_agg(case when e->>'identifier' = $2 then jsonb_set(e, '{party_id}', to_jsonb($3::bigint)) else e end) from jsonb_array_elements(participants_raw) e)
@@ -247,8 +271,8 @@ async function linkMessageSender(db: pg.PoolClient, partyId: number, identifier:
   return [`interaction_participants (${ids.length} thread(s))`, `segments.speaker_party_id (${seg.rowCount ?? 0} message(s))`];
 }
 
-const APPLIERS: Record<ProposalType, Applier> = {
-  async new_party(db, raw, row) {
+export const APPLIERS: Record<ProposalType, Applier> = {
+  async new_party(db, raw, row, undo) {
     const p = shape("new_party", raw);
     const ins = await db.query<{ id: number }>(`insert into parties (kind, name, emails, phones, location, website, notes) values ($1, $2, $3, $4, $5, $6, $7) returning id`, [
       p.kind,
@@ -259,14 +283,17 @@ const APPLIERS: Record<ProposalType, Applier> = {
       p.website ?? null,
       p.notes ?? null,
     ]);
-    const partyId = ins.rows[0].id;
+    const partyId = Number(ins.rows[0].id);
+    // Pushed first, so it is replayed last: everything that points at the party goes before it.
+    undo?.push({ op: "delete", table: "parties", where: { id: partyId } });
     const out = [`parties #${partyId}`];
     const evidence = raw.evidence as { identifier?: unknown } | undefined;
-    if (raw.source === "messages" && typeof evidence?.identifier === "string") out.push(...(await linkMessageSender(db, partyId, evidence.identifier, p.name as string)));
+    if (raw.source === "messages" && typeof evidence?.identifier === "string") out.push(...(await linkMessageSender(db, partyId, evidence.identifier, p.name as string, undo)));
     const role = p.role as { workspace_id: string; role: string; market?: string; detail?: string } | undefined;
     if (role) {
       const ws = await db.query(`select 1 from workspaces where id = $1`, [role.workspace_id]);
       if (!ws.rowCount) throw new ReviewError(400, `unknown workspace ${role.workspace_id}`);
+      undo?.push({ op: "delete", table: "roles", where: { party_id: partyId } });
       await db.query(`insert into roles (workspace_id, party_id, role, market, detail, source_interaction_id) values ($1, $2, $3, $4, $5, $6) on conflict do nothing`, [
         role.workspace_id,
         partyId,
@@ -280,7 +307,7 @@ const APPLIERS: Record<ProposalType, Applier> = {
     return out;
   },
 
-  async party_edit(db, raw) {
+  async party_edit(db, raw, _row, undo) {
     const p = shape("party_edit", raw);
     const changes = p.changes as Record<string, unknown>;
     const { rows } = await db.query(`select emails, phones from parties where id = $1 for update`, [p.party_id]);
@@ -292,19 +319,37 @@ const APPLIERS: Record<ProposalType, Applier> = {
       params.push(v);
       sets.push(`${col} = $${params.length}`);
     };
-    if (changes.name !== undefined) set("name", changes.name);
-    if (changes.emails !== undefined) set("emails", uniqueList(rows[0].emails, changes.emails));
-    if (changes.phones !== undefined) set("phones", uniqueList(rows[0].phones, changes.phones));
-    for (const col of ["location", "website", "notes"]) if (changes[col] !== undefined) set(col, changes[col]);
+    const before = await db.query(`select name, location, website, notes from parties where id = $1`, [p.party_id]);
+    const restore: Record<string, unknown> = {};
+    if (changes.name !== undefined) {
+      set("name", changes.name);
+      restore.name = before.rows[0].name;
+    }
+    for (const col of ["emails", "phones"] as const) {
+      if (changes[col] === undefined) continue;
+      const merged = uniqueList(rows[0][col], changes[col]);
+      set(col, merged);
+      const added = merged.slice(((rows[0][col] as string[] | null) ?? []).length);
+      if (added.length) undo?.push({ op: "array_remove", table: "parties", id: Number(p.party_id), column: col, values: added });
+    }
+    for (const col of ["location", "website", "notes"]) {
+      if (changes[col] === undefined) continue;
+      set(col, changes[col]);
+      restore[col] = before.rows[0][col];
+    }
+    if (Object.keys(restore).length) undo?.push({ op: "restore", table: "parties", where: { id: Number(p.party_id) }, values: restore });
     await db.query(`update parties set ${sets.join(", ")}, updated_at = now() where id = $1`, params);
     return [`parties #${String(p.party_id)} (${Object.keys(changes).join(", ")})`];
   },
 
-  async link_party_interaction(db, raw) {
+  async link_party_interaction(db, raw, _row, undo) {
     const p = shape("link_party_interaction", raw);
     await mustExist(db, "parties", p.party_id);
     await mustExist(db, "interactions", p.interaction_id);
     const label = (p.speaker_label as string | undefined) ?? null;
+    const prior = await db.query(`select speaker_label, confidence from interaction_participants where interaction_id = $1 and party_id = $2`, [p.interaction_id, p.party_id]);
+    const key = { interaction_id: Number(p.interaction_id), party_id: Number(p.party_id) };
+    undo?.push(prior.rows[0] ? { op: "restore", table: "interaction_participants", where: key, values: { speaker_label: prior.rows[0].speaker_label, confidence: prior.rows[0].confidence } } : { op: "delete", table: "interaction_participants", where: key });
     await db.query(
       `insert into interaction_participants (interaction_id, party_id, speaker_label, confidence)
        values ($1, $2, $3, $4)
@@ -315,28 +360,30 @@ const APPLIERS: Record<ProposalType, Applier> = {
     );
     const out = ["interaction_participants"];
     if (label) {
-      const res = await db.query(`update segments set speaker_party_id = $2 where interaction_id = $1 and speaker = $3 and speaker_party_id is null`, [p.interaction_id, p.party_id, label]);
+      const res = await db.query<{ id: number }>(`update segments set speaker_party_id = $2 where interaction_id = $1 and speaker = $3 and speaker_party_id is null returning id`, [p.interaction_id, p.party_id, label]);
+      undo?.push({ op: "segments_unassign", ids: res.rows.map((r) => Number(r.id)), party_id: Number(p.party_id) });
       out.push(`segments.speaker_party_id (${res.rowCount ?? 0} lines)`);
     }
     return out;
   },
 
-  async link_project_interaction(db, raw) {
+  async link_project_interaction(db, raw, _row, undo) {
     const p = shape("link_project_interaction", raw);
     await mustExist(db, "projects", p.project_id);
     await mustExist(db, "interactions", p.interaction_id);
-    await db.query(`insert into interaction_links (interaction_id, project_id) values ($1, $2) on conflict do nothing`, [p.interaction_id, p.project_id]);
-    return [`interaction_links (project #${String(p.project_id)})`];
+    const ins = await db.query(`insert into interaction_links (interaction_id, project_id) values ($1, $2) on conflict do nothing`, [p.interaction_id, p.project_id]);
+    if (ins.rowCount) undo?.push({ op: "delete", table: "interaction_links", where: { interaction_id: Number(p.interaction_id), project_id: Number(p.project_id) } });
+    return [ins.rowCount ? `interaction_links (project #${String(p.project_id)})` : `interaction_links (project #${String(p.project_id)} already linked)`];
   },
 
-  async new_fact(db, raw, row) {
+  async new_fact(db, raw, row, undo) {
     const p = shape("new_fact", raw);
     const { rows } = await db.query<{ workspace_id: string | null }>(`select workspace_id from interactions where id = $1`, [p.interaction_id]);
     if (!rows[0]) throw new ReviewError(400, `unknown interaction ${String(p.interaction_id)}`);
     for (const k of ["owner_party_id", "about_party_id"]) if (p[k] !== undefined) await mustExist(db, "parties", p[k]);
     if (p.project_id !== undefined) await mustExist(db, "projects", p.project_id);
     // One write path for facts: a repeat of an open fact links this conversation to it instead (fact_sources).
-    const quote = typeof row.reason === "string" ? (row.reason.match(/^“(.+)” at /)?.[1] ?? null) : null;
+    const quote = (typeof raw.source_quote === "string" ? raw.source_quote : null) ?? (typeof row.reason === "string" ? (row.reason.match(/^“(.+)” at /)?.[1] ?? null) : null);
     const r = await recordFact(db, {
       interactionId: p.interaction_id as number,
       workspaceId: (p.workspace_id as string | undefined) ?? rows[0].workspace_id,
@@ -353,10 +400,15 @@ const APPLIERS: Record<ProposalType, Applier> = {
       origin: "review",
       sourceReviewId: row.id as number,
     });
+    if (r.created) undo?.push({ op: "delete", table: "facts", where: { id: r.factId } });
+    else {
+      if (r.previous) undo?.push({ op: "restore", table: "facts", where: { id: r.factId }, values: r.previous });
+      if (r.sourceAdded) undo?.push({ op: "delete", table: "fact_sources", where: { fact_id: r.factId, interaction_id: Number(p.interaction_id) } });
+    }
     return [r.created ? `facts #${r.factId}` : `facts #${r.factId} (already recorded; this conversation added as a source)`];
   },
 
-  async new_relationship(db, raw) {
+  async new_relationship(db, raw, _row, undo) {
     const p = shape("new_relationship", raw);
     await mustExist(db, "parties", p.from_party_id);
     await mustExist(db, "parties", p.to_party_id);
@@ -369,6 +421,8 @@ const APPLIERS: Record<ProposalType, Applier> = {
       ws,
     ]);
     if (seen.rows[0]) {
+      const prev = await db.query(`select evidence_count, last_seen, notes from relationships where id = $1`, [seen.rows[0].id]);
+      undo?.push({ op: "restore", table: "relationships", where: { id: Number(seen.rows[0].id) }, values: prev.rows[0] });
       await db.query(`update relationships set evidence_count = coalesce(evidence_count, 0) + 1, last_seen = now(), notes = coalesce(notes, $2) where id = $1`, [seen.rows[0].id, p.notes ?? null]);
       return [`relationships #${seen.rows[0].id} (evidence +1)`];
     }
@@ -376,6 +430,7 @@ const APPLIERS: Record<ProposalType, Applier> = {
       `insert into relationships (from_party_id, to_party_id, kind, workspace_id, first_seen, last_seen, evidence_count, notes) values ($1, $2, $3, $4, now(), now(), 1, $5) returning id`,
       [p.from_party_id, p.to_party_id, p.kind, ws, p.notes ?? null],
     );
+    undo?.push({ op: "delete", table: "relationships", where: { id: Number(ins.rows[0].id) } });
     return [`relationships #${ins.rows[0].id}`];
   },
 };

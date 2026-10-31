@@ -228,7 +228,16 @@ function buildServer(d: BuildDeps): McpServer {
           await audit(null, "rate_limited");
           return textResult({ error: "rate_limited", message: `This token may make ${d.runtime.limiter.limit} calls per minute. Retry in ${rl.retryAfterSec} s.`, retry_after_sec: rl.retryAfterSec }, true);
         }
-        const toolCtx: ToolContext = { reader: d.reader, proposer: d.proposer, scope, principal, publicUrl: d.ctx.config.PUBLIC_URL || "", embeddings: d.runtime.embeddings, now: d.now };
+        const toolCtx: ToolContext = {
+          reader: d.reader,
+          proposer: d.proposer,
+          scope,
+          principal,
+          publicUrl: d.ctx.config.PUBLIC_URL || "",
+          embeddings: d.runtime.embeddings,
+          now: d.now,
+          autoApply: { pool: d.ctx.pool, enabled: d.ctx.config.AUTO_APPLY === "on", minConfidence: d.ctx.config.AUTO_APPLY_MIN_CONFIDENCE },
+        };
         try {
           const out = await tool.run(args as never, toolCtx);
           await audit(out.count, null);

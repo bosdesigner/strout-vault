@@ -24,7 +24,7 @@ email, edits records or touches another system.
 | `get_project(id \| name)` | Project, parties with roles, linked interactions, facts. | – |
 | `list_open_commitments(workspace?, party_id?, due_before?)` | Open facts of kind commitment / task / follow-up with the source moment (`quote_start_sec`). Empty while `facts` is empty. | – |
 | `list_leads(workspace?, lead_type?, since?, needs_follow_up?, query?, limit?)` | Every lead, one entry per person across the platform, the funnel and Airtable: submissions with source, stage and status, the last conversation, open items. `needs_follow_up` is the "not talked to since they came in" list ([LEADS.md](LEADS.md)). | – |
-| `propose_update(item_type, proposal, reason, interaction_id?)` | Validates the proposal (zod, per `item_type`) and inserts one `review_queue` row. The owner approves or rejects it on the Review page. | `review_queue` only |
+| `propose_update(item_type, proposal, reason, interaction_id?)` | Validates the proposal (zod, per `item_type`) and inserts one `review_queue` row (as `mcp_proposer`). The app then runs the auto-apply rules on that row ([AUTO-APPLY.md](AUTO-APPLY.md)): additive, source-backed changes apply at once and are logged with an Undo; the rest wait on the Review page. Returns `{applied, rule, review_id}`. Optional `source_quote`: the verbatim words the proposal rests on. | `review_queue` (insert, proposer role); applied changes via the app role |
 
 Every tool enforces the token's workspace scope in SQL (vector queries join `chunks → interactions`
 and filter `workspace_id`), returns at most 20 results by default and 50 at most, and includes

@@ -34,6 +34,9 @@ const SAME_FACT_WINDOW_DAYS = 45;
 export interface RecordResult {
   factId: number;
   created: boolean;
+  /** Joined an existing fact: whether this conversation's fact_sources row is new, and the fact's fill-in columns before this mention. */
+  sourceAdded?: boolean;
+  previous?: { due_date: string | null; amount: string | null; project_id: number | null; about_party_id: number | null };
 }
 
 type Db = pg.Pool | pg.PoolClient;
@@ -61,7 +64,8 @@ export async function findSameFact(db: Db, f: FactInput): Promise<number | null>
 export async function recordFact(db: Db, f: FactInput): Promise<RecordResult> {
   const same = await findSameFact(db, f);
   if (same) {
-    await db.query(
+    const before = await db.query(`select to_char(due_date, 'YYYY-MM-DD') as due_date, amount::text as amount, project_id, about_party_id from facts where id = $1`, [same]);
+    const src = await db.query(
       `insert into fact_sources (fact_id, interaction_id, quote, quote_start_sec, message_idx, confidence) values ($1, $2, $3, $4, $5, $6)
        on conflict (fact_id, interaction_id) do nothing`,
       [same, f.interactionId, f.quote ?? null, f.quoteStartSec ?? null, f.messageIdx ?? null, f.confidence ?? null],
@@ -71,7 +75,13 @@ export async function recordFact(db: Db, f: FactInput): Promise<RecordResult> {
       `update facts set due_date = coalesce(due_date, $2), amount = coalesce(amount, $3), project_id = coalesce(project_id, $4), about_party_id = coalesce(about_party_id, $5) where id = $1`,
       [same, f.dueDate ?? null, f.amount ?? null, f.projectId ?? null, f.aboutPartyId ?? null],
     );
-    return { factId: same, created: false };
+    const b = before.rows[0] ?? {};
+    return {
+      factId: same,
+      created: false,
+      sourceAdded: (src.rowCount ?? 0) > 0,
+      previous: { due_date: b.due_date ?? null, amount: b.amount ?? null, project_id: b.project_id == null ? null : Number(b.project_id), about_party_id: b.about_party_id == null ? null : Number(b.about_party_id) },
+    };
   }
   const ins = await db.query<{ id: number }>(
     `insert into facts (interaction_id, workspace_id, kind, text, owner_party_id, about_party_id, project_id, amount, due_date, status, confidence, quote_start_sec, quote, message_idx, origin, source_review_id)

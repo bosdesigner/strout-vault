@@ -145,7 +145,13 @@ describe("extract step", () => {
 
     const report = await buildReport(pool, new Date());
     expect(report.extraction).toMatchObject({ read: 3, failed: 0 });
-    expect(report.extraction!.openProposals).toBe(items.length);
+    // The auto-apply rules (docs/AUTO-APPLY.md) ran on each queued item: what the transcript itself
+    // backs is applied and logged; the rest is still open for review.
+    const auto = await pool.query(`select a.review_id, a.rule, a.actor from auto_applies a join review_queue rq on rq.id = a.review_id where rq.proposal->>'source' = 'extract'`);
+    expect(auto.rowCount).toBe(1); // the mock speaker match whose name the transcript says
+    expect(auto.rows.every((a) => a.actor === "extract" && a.rule.startsWith("additive:"))).toBe(true);
+    for (const i of items) expect(i.status, `#${i.id}`).toBe(auto.rows.some((a) => Number(a.review_id) === i.id) ? "approved" : "open");
+    expect(report.extraction!.openProposals).toBe(items.length - auto.rowCount!);
     expect(report.spend.extractUsd).toBeCloseTo(s.spentUsd, 6);
   });
 
