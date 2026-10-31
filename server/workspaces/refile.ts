@@ -5,7 +5,9 @@
 // a company or on a project; email domains as the fallback) over Inbox items and files every one that
 // now maps to exactly one workspace. phalanx is never assigned automatically (noAutoPhalanx). Only
 // items still in `inbox` are touched, so nothing a person filed is ever moved. Open
-// workspace_assignment items for a filed thread are closed as approved.
+// workspace_assignment items for a filed thread are closed as approved. Items the classifier's phalanx
+// guard parked in inbox (classify_evidence.phalanx, or an open phalanx review item) are never touched:
+// a known participant does not make Phalanx material safe to file elsewhere.
 import type pg from "pg";
 import { INBOX, findOwnerParty, routeThread, type PartyRef } from "../messages/ingest.ts";
 import type { OwnerIdentity } from "../messages/identity.ts";
@@ -33,6 +35,10 @@ export async function refileInbox(pool: pg.Pool, rules: MessageRules, owner: Own
             coalesce((select array_agg(ip.party_id) from interaction_participants ip where ip.interaction_id = i.id), '{}') as party_ids
        from interactions i
       where i.workspace_id = '${INBOX}' ${scope}
+        -- Never refile what the phalanx guard put here (docs/phase1-verification.md): only Ben decides those.
+        and coalesce(i.classify_evidence->>'phalanx', 'false') <> 'true'
+        and not exists (select 1 from review_queue rq where rq.interaction_id = i.id and rq.status = 'open'
+                          and rq.item_type = 'interaction_workspace' and rq.proposal->>'workspace_id' = 'phalanx')
       order by i.id desc limit $1`,
     params,
   );

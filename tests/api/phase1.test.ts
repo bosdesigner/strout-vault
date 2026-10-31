@@ -207,6 +207,21 @@ describe("classify step", () => {
   });
 });
 
+describe("refile after the phalanx guard", () => {
+  it("never refiles an item the guard parked in inbox, even when its people are known", async () => {
+    // Kevin McGuire (party 2) has an another_story role in the seed: refile would file this thread there.
+    const parked = await add({ workspace_id: "inbox", kind: "text_thread", title: "Texts with Kevin", source: "imessage" }, [["Kevin", "We still don't have the money for the wound care"]]);
+    const plain = await add({ workspace_id: "inbox", kind: "text_thread", title: "Texts with Kevin, again", source: "imessage" }, [["Kevin", "See you Monday at the site"]]);
+    for (const id of [parked, plain]) await pool.query(`insert into interaction_participants (interaction_id, party_id) values ($1, 2)`, [id]);
+    await pool.query(`update interactions set classified_at = now(), classify_evidence = '{"phalanx": true, "decision": "inbox"}' where id = $1`, [parked]);
+    await pool.query(`update interactions set classified_at = now() where id = $1`, [plain]);
+    await runWorker(makeCtx(makeConfig()), { trigger: "test", steps: ["refile"] });
+    const ws = async (id: number) => (await one<{ workspace_id: string }>(`select workspace_id from interactions where id = $1`, [id])).workspace_id;
+    expect(await ws(parked)).toBe("inbox");
+    expect(await ws(plain)).not.toBe("inbox");
+  });
+});
+
 describe("extraction to facts", () => {
   it("writes confident facts as open facts, links the same promise from a second conversation, and resolves Friday from the day it was said", async () => {
     // Wednesday 2026-10-28 (Chicago): "Friday" is 2026-10-30.
